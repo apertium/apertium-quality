@@ -1,10 +1,7 @@
 * text=auto !eol
-/CHANGES.txt -text
 /ChangeLog -text
 /LICENCE -text
-/LICENSE.txt -text
 /README -text
-/README.txt -text
 apertiumqa/__init__.py -text
 apertiumqa/average_ambiguity.py -text
 apertiumqa/core.py -text
