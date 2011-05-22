@@ -5,12 +5,12 @@
 == Setup ==
 Installation is very, very easy.
 
-To install by default to /usr/local, as root:
+To install by default to your main Python site-packages (in /usr), as root:
 # ./autogen.sh
 
 That's it!
 
-=== Rootless Installation === 
+=== Prefixed (Rootless) Installation === 
 For a rootless, prefixed installation:
 $ ./autogen.sh PREFIX=/path/to/prefix prefixed
 

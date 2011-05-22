@@ -20,7 +20,7 @@ eval $*
 
 # BEGIN CONFIG
 if [ 'x'$PREFIX == 'x' ] ; then
-	PREFIX="/usr/local"
+	PREFIX="/usr"
 fi
 echo "[*] Using prefix: $PREFIX"
 
@@ -67,13 +67,13 @@ _install_prefixed() {
 		echo "[!] ${PREFIX} not writable. Aborting."
 		exit 1
 	fi
-	_install
+	$PYTHON setup.py install --prefix=${PREFIX} >/dev/null
 	echo "[-] It is recommended that you add ${PREFIX}/bin to your PATH variable, and ${PYTHONPATH} to your PYTHONPATH variable."
 }
 
 _install() {
 	echo "[*] Installing..."
-	python setup.py install --prefix=$PREFIX >/dev/null
+	$PYTHON setup.py install >/dev/null
 }
 
 if [ $_PREFIXED -gt 0 ] ; then
