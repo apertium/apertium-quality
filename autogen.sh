@@ -20,9 +20,8 @@ eval $*
 
 # BEGIN CONFIG
 if [ 'x'$PREFIX == 'x' ] ; then
-	PREFIX="/usr"
+	_PREFIXED=0
 fi
-echo "[*] Using prefix: $PREFIX"
 
 if [ 'x'$PYTHON == 'x' ] ; then
 	PYTHON=`type -P python`
@@ -42,10 +41,18 @@ fi
 
 echo "[*] Python version: $VERSION"
 
-if [ $_PREFIXED -gt 0 ] ; then
-	echo "[*] Doing prefixed (rootless) installation"
+if [ 'x'$PREFIX == 'x' ] ; then
+	_pkgdir=`python -c "from distutils.sysconfig import get_python_lib; print get_python_lib()"`
 else
-	echo "[*] Doing normal installation (may require root)"
+	_pkgdir="${PREFIX}/lib/python${VERSION}/site-packages"
+fi
+
+echo "[*] Chosen package directory: ${_pkgdir}"
+
+if [ $_PREFIXED -gt 0 ] ; then
+	echo "[*] Attempting a prefixed (rootless) installation"
+else
+	echo "[*] Attempting a normal installation (may require root)"
 fi
 echo "Ready to install [y/N]? \c"
 read _ready
@@ -61,12 +68,13 @@ _install_standalone() {
 }
 
 _install_prefixed() {
-	export PYTHONPATH="${PREFIX}/lib/python${VERSION}/site-packages"
+	export PYTHONPATH=$_pkgdir
 	mkdir -p $PYTHONPATH
 	if [ $? -gt 0 ] ; then
 		echo "[!] ${PREFIX} not writable. Aborting."
 		exit 1
 	fi
+	echo "[*] Installing..."
 	$PYTHON setup.py install --prefix=${PREFIX} >/dev/null
 	echo "[-] It is recommended that you add ${PREFIX}/bin to your PATH variable, and ${PYTHONPATH} to your PYTHONPATH variable."
 }
@@ -82,4 +90,8 @@ else
 	_install
 fi
 
-echo "[*] Installation complete."
+if [ $? -gt 0 ] ; then 
+	echo "[!] An error occurred."
+else
+	echo "[*] Installation complete."
+fi
