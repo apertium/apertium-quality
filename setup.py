@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 from os import listdir
 
 setup(
-	name = "ApertiumQA",
+	name = "apertium-quality",
 	version = "0.0",
 	packages = find_packages(),
 	scripts = [ "bin/" + i for i in listdir("bin") ],
