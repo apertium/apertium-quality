@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<statistics type="apertium" version="1.0">
+	<regressions>
+		<regression date="2011-05-24T14:01:01.331114">
+			<name>Example</name>
+			<checksum type="sha1">dcbc8f63b06c899b9db957f0e03466860fce8056</checksum>
+			<passes>12</passes>
+			<fails>3</fails>
+		</regression>
+	</regressions>
+</statistics>
