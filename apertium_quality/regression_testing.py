@@ -47,8 +47,9 @@ class RegressionTest(object):
 			
 			for n, test in enumerate(self.tests[side].items()):
 				res = self.results[n].split("[_]")[0].strip().encode('utf-8')
+				ori = test[0].strip().encode('utf-8')
 				tes = test[1].strip().encode('utf-8')
-				self.out.write("%s\t  %s\n" % (self.mode, tes))
+				self.out.write("%s\t  %s\n" % (self.mode, ori))
 				if res == tes:
 					self.out.write("WORKS\t  %s\n" % res)
 					self.passes += 1
