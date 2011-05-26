@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 import sys
 try:
 	import argparse	
@@ -7,7 +5,7 @@ except:
 	raise ImportError("Please install argparse module.")
 
 from apertium_quality.regression_testing import RegressionTest
-from apertium_quality.core import Statistics
+from apertium_quality import Statistics
 
 class UI(object):
 	def __init__(self):
@@ -36,10 +34,13 @@ class UI(object):
 			title = page.find(ns + 'title').text
 			stats.add_regression(title, rev, self.test.passes, self.test.total)
 			stats.write()
-		
-if __name__ == "__main__":
+
+def main():
 	try:
 		ui = UI()
 		ui.start()
 	except KeyboardInterrupt:
 		pass
+
+if __name__ == "__main__":
+	main()
