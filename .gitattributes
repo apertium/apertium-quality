@@ -19,4 +19,5 @@ bin/aq-regtest -text
 /distribute_setup.py -text
 doc/dict-example.dix -text
 doc/statistics.rnc -text
+doc/statistics.rng -text
 /setup.py -text

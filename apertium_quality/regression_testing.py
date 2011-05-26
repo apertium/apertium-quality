@@ -47,7 +47,7 @@ class RegressionTest(object):
 			
 			for n, test in enumerate(self.tests[side].items()):
 				res = self.results[n].split("[_]")[0].strip().encode('utf-8')
-				orig = test[0].strip().encode('utf-8')
+				orig = test[0].split("[_]")[0].strip().encode('utf-8')
 				targ = test[1].strip().encode('utf-8')
 				self.out.write("%s\t  %s\n" % (self.mode, orig))
 				if res == targ:
@@ -63,5 +63,5 @@ class RegressionTest(object):
 		print self.out.getvalue()
 		percent = 0
 		if self.total > 0:
-			percent = float(self.passes) / float(self.total) * 100)
+			percent = float(self.passes) / float(self.total) * 100
 		print "Passes: %d/%d, Success rate: %.2f%%" % (self.passes, self.total, percent)
