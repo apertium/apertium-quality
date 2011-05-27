@@ -5,8 +5,10 @@ element statistics {
 	element regressions {
 		element regression {
 			attribute timestamp { xsd:dateTime },
-			element title { xsd:string },
-			element revision { xsd:positiveInteger },
+			element title { 
+				xsd:string,
+				attribute revision { xsd:positiveInteger }
+			},
 			element total { xsd:positiveInteger },
 			element passes { xsd:positiveInteger },
 			element fails { xsd:positiveInteger }
