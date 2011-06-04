@@ -247,10 +247,10 @@ class Statistics(object):
 			try:
 				self.tree = etree.parse(open(f))
 				if self.tree.getroot().tag == "statistics":
-					if self.tree.getroot().get('version') == "1.0":	
+					#if self.tree.getroot().get('version') == "1.0":	
 						#print "[STUB] Do version specific crap here for 1.0"
-					else:
-						pass
+					#else:
+						#pass
 						#print "[DEBUG] Version incorrect."
 					self.root = self.tree.getroot()
 					#print "[DEBUG] Imported tree."
