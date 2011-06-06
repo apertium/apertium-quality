@@ -30,7 +30,7 @@ class UI(object):
 	def start(self):
 		self.test.run()
 		self.test.get_output()
-		if self.args.statfile != []:
+		if self.args.statfile:
 			stats = Statistics(self.args.statfile)
 			ns = "{http://www.mediawiki.org/xml/export-0.3/}"
 			page = self.test.tree.getroot().find(ns + 'page')
