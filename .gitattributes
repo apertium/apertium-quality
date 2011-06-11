@@ -5,12 +5,14 @@
 apertium_quality/__init__.py -text
 apertium_quality/corpora.py -text
 apertium_quality/frontend/__init__.py -text
+apertium_quality/frontend/ambiguity_tester.py -text
 apertium_quality/frontend/coverage_tester.py -text
 apertium_quality/frontend/hfst_tester.py -text
 apertium_quality/frontend/regression_tester.py -text
 apertium_quality/frontend/website_generator.py -text
 apertium_quality/testing.py -text
 /autogen.sh -text
+bin/aq-ambtest -text
 bin/aq-covtest -text
 bin/aq-hfsttest -text
 bin/aq-htmlgen -text
