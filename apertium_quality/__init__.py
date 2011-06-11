@@ -1,24 +1,43 @@
 import xml.etree.cElementTree as etree
-import os, os.path, re 
-import matplotlib
-matplotlib.use('Agg') # stops it from using X11 and breaking
-import matplotlib.pyplot as plt
+import os, os.path, re, sys 
+try:
+	import matplotlib
+	matplotlib.use('Agg') # stops it from using X11 and breaking
+	import matplotlib.pyplot as plt
+except:
+	matplotlib = None
 
-from cStringIO import StringIO
 from collections import defaultdict
 try:
 	from collections import OrderedDict
 except:
 	from ordereddict import OrderedDict
+
 from os.path import abspath, dirname, basename
 from os import listdir
+
 from xml.etree.cElementTree import Element, SubElement
 from xml.sax import make_parser
 from xml.sax.handler import ContentHandler
+
 from hashlib import sha1
 from datetime import datetime
 from textwrap import dedent
 #import logging
+
+
+
+def is_python2():
+	if sys.version[0] == '2':
+		return True
+	return False
+
+if is_python2():
+	from cStringIO import StringIO
+else:
+	from io import StringIO
+
+
 
 class ParseError(Exception):
 	pass
@@ -29,12 +48,16 @@ def checksum(data):
 def from_isoformat(t):
 	return datetime.strptime(t, "%Y-%m-%dT%H:%M:%S.%f")
 
-def whereis(program):
-	for path in os.environ.get('PATH', '').split(':'):
-		if os.path.exists(os.path.join(path, program)) and \
-		   not os.path.isdir(os.path.join(path, program)):
-			return os.path.join(path, program)
-	return None
+def whereis(programs):
+	out = {}
+	for p in programs:
+		for path in os.environ.get('PATH', '').split(':'):
+			if os.path.exists(os.path.join(path, p)) and \
+			   not os.path.isdir(os.path.join(path, p)):
+					out[p] = os.path.join(path, p)
+		if not out.get(p):
+			raise EnvironmentError("Cannot find `%s`. Check $PATH." % p)
+	return out
 
 def split_ext(fn):
 	return tuple(fn.rsplit('.', 1))
@@ -160,6 +183,8 @@ class Webpage(object):
 	""")	
 
 	def __init__(self, stats, fdir):
+		if not matplotlib:
+			raise ImportError("matplotlib not installed.")
 		#if not isinstance(stats, Statistics):
 		#	raise TypeError("Input must be Statistics object.")
 		self.stats = stats
