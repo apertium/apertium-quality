@@ -483,11 +483,12 @@ class HfstTest(object):
 
 			for form in expected_results:
 				if not form in actual_results:
-					invalid.add(form)
+					missing.add(form)
+
 			
 			for form in actual_results:
 				if not form in expected_results:
-					missing.add(form)
+					invalid.add(form)
 		
 			for form in actual_results:
 				if not form in (invalid | missing):
@@ -499,11 +500,11 @@ class HfstTest(object):
 			
 			if not self.args.get('hide_fail'):
 				if len(invalid) > 0:
-					self.out.failure(test, "Invalid test item", invalid)
+					self.out.failure(test, "unexpected results", invalid)
 					self.count[d]["Fail"] += len(invalid)
 				if len(missing) > 0 and \
 						(not self.args.get('ignore_analyses') or not passed):
-					self.out.failure(test, "Unexpected output", missing)
+					self.out.failure(test, "missing results", missing)
 					self.count[d]["Fail"] += len(missing)
 
 		self.out.result(title, c, self.count[d])
