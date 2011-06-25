@@ -425,11 +425,11 @@ class HfstTest(object):
 			keys = tests.keys()
 			app = Popen([self.program, f], stdin=PIPE, stdout=PIPE, stderr=PIPE)
 			args = '\n'.join(keys) + '\n'
-			print(args)
 			res = str(app.communicate(args.encode('utf-8'))[0].decode('utf-8')).split('\n\n')
-			print(res)
 			if app.returncode > 0:
 				self.results[d] = res[0]
+			elif res[0] == '':
+				self.results[d] = "Possible segfault"
 			else:
 				self.results[d] = self.parse_fst_output(res)
 		
@@ -473,8 +473,6 @@ class HfstTest(object):
 		self.count[d] = {"Pass": 0, "Fail": 0}
 
 		for test, forms in tests.items():
-			print(self.results)
-			import sys; sys.exit()
 			expected_results = set(forms)
 			actual_results = set(self.results[f][test])
 
