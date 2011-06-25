@@ -1,5 +1,3 @@
-import xml.etree.cElementTree as etree
-import os, os.path, re, sys 
 try:
 	import matplotlib
 	matplotlib.use('Agg') # stops it from using X11 and breaking
@@ -7,136 +5,21 @@ try:
 except:
 	matplotlib = None
 
+import xml.etree.cElementTree as etree
+import re, os
+
 from collections import defaultdict, OrderedDict
-
-from os.path import abspath, dirname, basename
-from os import listdir
-
-from xml.etree.cElementTree import Element, SubElement
-from xml.sax import make_parser
-from xml.sax.handler import ContentHandler
-
 from io import StringIO
-from hashlib import sha1
-from datetime import datetime
 from textwrap import dedent
-#import logging
-
+from xml.etree.cElementTree import Element, SubElement
+from datetime import datetime
 
 class ParseError(Exception):
 	pass
 
-def checksum(data):
-	return str(sha1(data).hexdigest())
-
 def from_isoformat(t):
 	return datetime.strptime(t, "%Y-%m-%dT%H:%M:%S.%f")
 
-def whereis(programs):
-	out = {}
-	for p in programs:
-		for path in os.environ.get('PATH', '').split(':'):
-			if os.path.exists(os.path.join(path, p)) and \
-			   not os.path.isdir(os.path.join(path, p)):
-					out[p] = os.path.join(path, p)
-		if not out.get(p):
-			raise EnvironmentError("Cannot find `%s`. Check $PATH." % p)
-	return out
-
-def split_ext(fn):
-	return tuple(fn.rsplit('.', 1))
-
-def get_file_family(fn):
-	f = split_ext(fn)[0]
-	d = dirname(abspath(f))
-	return [os.path.join(d, i) for i in listdir(d) if split_ext(i)[0] == basename(f)]
-
-def get_dix(fn):
-	f = split_ext(fn)
-	if f[-1].lower() == "dix":
-		return fn
-	if len(split_ext(fn)[0]) != len(fn):
-		return "%s.dix" % f[0]
-	return None
-
-def is_tnx(ext):
-	return True if (len(ext) == 3 and ext[1] in "123456789") else False
-
-def is_rlx(ext):
-	return True if (len(ext) == 3 and ext == "rlx") else False
-
-#def is_transfer_rules(ext):
-#	return (is_tnx(ext) or is_rlx(ext))
-
-class Dictionary(object):
-	class DIXHandler(ContentHandler):
-		def __init__(self):
-			self.lemmas = []
-
-		def startElement(self, tag, attrs):
-			if tag == "e":
-				if "lm" in attrs:
-					self.lemmas.append(attrs.get("lm"))
-	
-	class TnXHandler(ContentHandler):
-		def __init__(self):
-			self.rules = []
-
-		def startElement(self, tag, attrs):
-			if tag == "rule":
-				if "comment" in attrs:
-					self.rules.append(attrs.get("comment"))
-
-	def __init__(self, f):
-		self.fn = f
-		self.f = open(get_dix(f), 'rb')
-		self.lemmas = None
-		self.rules = None
-		
-	def get_entries(self):
-		if not self.lemmas:
-			parser = make_parser()
-			handler = self.DIXHandler()
-			parser.setContentHandler(handler)
-			parser.parse(self.f)
-			self.lemmas = handler.lemmas
-		return self.lemmas
-	
-	def get_unique_entries(self):	
-		return set(get_entries)
-
-	def get_rules(self):
-		if not self.rules:
-			self.rules = {}
-			for i in get_file_family(self.fn):
-				ext = split_ext(i)[1]
-				if is_tnx(ext):
-					parser = make_parser()
-					handler = self.TnXHandler()
-					parser.setContentHandler(handler)
-					parser.parse(i)
-					self.rules[ext] = handler.rules
-				elif is_rlx(ext):
-					f = open(i, 'rb')
-					self.rules[ext] = defaultdict(list)
-					rules = ("SELECT", "REMOVE", "MAP", "SUBSTITUTE")
-					for line in f.xreadlines():
-						if line.startswith(rules):
-							x = line.split(" ", 1)
-							self.rules[ext][x[0]].append(x[1])
-		return self.rules
-	
-	def get_rule_count(self):
-		if not self.rules:
-			self.get_rules()
-		c = 0
-		for ik, iv in self.get_rules().items():
-			if isinstance(iv, list):
-				c += len(iv)
-			elif isinstance(iv, dict):
-				for jk, jv in iv.items():
-					c += len(jv)
-		return c
 
 class Webpage(object):
 	#ns = "{http://www.w3.org/1999/xhtml}"
@@ -310,7 +193,7 @@ class Statistics(object):
 		for i in r.getiterator("regression"):
 			ts = from_isoformat(i.attrib['timestamp'])
 			t = i.find("title")
-			title = "%s - %s" % (t.text, t.attrib["revision"])
+			title = "%s/%s" % (t.text, t.attrib["revision"])
 			regressions[title][ts] = {
 				"percent": i.find("percent").text,
 				"total": i.find("total").text,
@@ -323,7 +206,6 @@ class Statistics(object):
 			out[k] = OrderedDict(sorted(v.items()))
 
 		return out
-
 	
 	def add_coverage(self, f, df, fck, dck, cov, words, kwords, ukwords, topuw):
 		root = self.root.find('coverages')
@@ -347,4 +229,69 @@ class Statistics(object):
 		for mot, num in topuw:
 			e = SubElement(s, 'word', count=str(num))
 			e.text = str(mot)
+	
+	'''def get_coverages(self):
+		r = self.root.find('coverages')
+		if not r:
+			return dict()
+		coverages = defaultdict(dict)
+		
+		for i in r.getiterator("coverage"):
+			ts = from_isoformat(i.attrib['timestamp'])
+			c = i.find("corpus").text
+			ck = i.find("corpus").attrib["checksum"]
+			corpus = "%s/%s" % (c, ck)
+			
+			coverages[corpus][ts] = {
+				
+			}
+
+		out = dict()
+		for k, v in coverages.items():
+			out[k] = OrderedDict(sorted(v.items()))
+
+		return out'''
+		
+	def add_ambiguity(self, f, fck, sf, a, avg):
+		root = self.root.find('ambiguities')
+		if not root:
+			root = SubElement(self.root, 'ambiguities')
+		r = SubElement(root, 'ambiguity', timestamp=datetime.utcnow().isoformat())
+		
+		s = SubElement(r, 'dictionary')
+		s.text = str(f)
+		s.attrib["checksum"] = str(fck)
+
+		SubElement(r, 'surface-forms').text = str(sf)
+		SubElement(r, 'analyses').text = str(a)
+		SubElement(r, 'average').text = str(avg)
+
+	def add_hfst(self, config, ck, gen, gk, morph, mk, tests, passes, fails):
+		root = self.root.find('hfsts')
+		if not root:
+			root = SubElement(self.root, 'hfsts')
+		r = SubElement(root, 'hfst', timestamp=datetime.utcnow().isoformat())
+		
+		s = SubElement(r, 'config')
+		s.text = str(config)
+		s.attrib["checksum"] = str(ck)
+		
+		s = SubElement(r, 'gen')
+		s.text = str(gen)
+		s.attrib["checksum"] = str(gk)
+		
+		s = SubElement(r, 'morph')
+		s.text = str(morph)
+		s.attrib["checksum"] = str(mk)
+		
+		s = SubElement(r, 'tests')
+		for k, v in tests.items():
+			t = SubElement(s, 'test')
+			t.text = k
+			t.attrib['passes'] = v["Pass"]
+			t.attrib['fails'] = v["Fail"]
+		
+		SubElement(r, 'total').text = str(passes + fails)
+		SubElement(r, 'passes').text = str(passes)
+		SubElement(r, 'fails').text = str(fails)
 		
