@@ -2,24 +2,19 @@
 #-*- coding: utf-8 -*-
 
 import sys, os
-reload(sys)
-sys.setdefaultencoding('utf-8')
 import re, logging, string
 import xml.sax
 import xml.sax.handler
 from xml.sax import SAXException
-#import nltk.data
-
 from multiprocessing import Process, Pool, Queue, cpu_count
 import multiprocessing
-
-from os import StringIO
+from io import StringIO
 from queue import Empty
 
-from wpparser import *
-from wputils import *
+import nltk.data
+from mwtools import MediawikiHandler
 
-class CorpusGenerator(object):
+class CorpusExtractor(object):
 	class Handler(xml.sax.handler.ContentHandler):
 		def __init__(self, parent):
 			self.inq = parent.inq
@@ -59,10 +54,10 @@ class CorpusGenerator(object):
 					self.badText = True
 			
 			elif self.inTitle:
-				if ":" in ch or "Wikipedia" in ch or "Page" in ch:
+				if ch in (":", "Wikipedia", "Page"):
 					self.badText = True
 				else:
-					self.curTitle = special_char(ch)
+					self.curTitle = ch
 	
 			elif self.inText:
 				self.text.write(ch)
@@ -84,24 +79,36 @@ class CorpusGenerator(object):
 			elif name == "mediawiki":
 				self.inMediawiki = False
 	
-	def __init__(self):
-		self.inq = Queue()
+	def __init__(self, fin, fout, cores=0, tokenizer=None, q=None):
+		self.fin = fin
+		self.fout = fout
+		self.cores = int(cores or 0)
+		self.inq = Queue(q or 32)
 		self.outq = Queue()
-		#self.tokenizer = nltk.data.load('tokenizers/punkt/english.pickle')
+		try:
+			if tokenizer:
+				self.tokenizer = nltk.data.load("file:" + tokenizer)
+			else:
+				self.tokenizer = nltk.data.load('tokenizers/punkt/english.pickle')
+		except:
+			from nltk import download
+			print("Downloading tokenisation library. This may take some time. (~6MB)")
+			download('punkt')
+			self.tokenizer = nltk.data.load('tokenizers/punkt/english.pickle')
 	
-	def generate(self, fin, fout, maxsentences=None):
-		self._make_processes(fin, fout, maxsentences)
+	def generate(self, max_sentences=0):
+		self._make_processes(self.fin, self.fout, max_sentences)
 		self.parser.start()
 		self._start_processes()
 
-	def _make_processes(self, fin, fout, maxsentences=None):
-		print("Cpus: ", cpu_count())
+	def _make_processes(self, fin, fout, max_sentences):
+		#print("Threads: ", cpu_count())
 		self.parser = Process(target=self._parser, args=(fin,))
 		self.parser.daemon = True
-		self.workers = [Process(target=self.worker) for i in range(cpu_count())]
+		self.workers = [Process(target=self.worker) for i in range(self.cores or cpu_count())]
 		for w in self.workers:
 			w.daemon = True
-		self.larry = Process(target=self.output_worker, args=(fout,maxsentences))
+		self.larry = Process(target=self.output_worker, args=(fout, max_sentences))
 		self.larry.daemon = True
 	
 	def _start_processes(self):
@@ -118,78 +125,73 @@ class CorpusGenerator(object):
 		pid = os.getpid()
 		parser = xml.sax.make_parser()
 		parser.setContentHandler(self.Handler(self))
-		parser.parse(open(fin))
-		print("%d parser done, exiting" % pid)
-
+		f = open(fin)
+		parser.parse(f)
+		f.close()
+		del parser
+		#print("XML parser done, exiting [PID %d]" % pid)
 	
-	def heuristics(self, input, minwords=6, maxcomma=2, maxpunc=2, maxdigits=6):
+	def heuristics(self, data, minwords=6, maxcomma=2, maxpunc=2, maxdigits=6):
 		punc = "#$%&\'()*+-/:;<=>?@[\\]^_`{|}~"
-		if '\n' in input:
+		if '\n' in data:
 			return False
-		if "</" in input or "/>" in input:
+		if "<" in data or ">" in data:
 			return False
-		if input[0] in punc:
+		if data[0] in punc:
 			return False
-		if minwords-1 > input.count(' '):
+		if minwords-1 > data.count(' '):
 			return False
-		if maxcomma < input.count(','):
+		if maxcomma < data.count(','):
 			return False
 		for p in punc:
-			if maxpunc < input.count(p):
+			if maxpunc < data.count(p):
 				return False
 		count = 0
 		for n in string.digits:
-			count += input.count(n)
+			count += data.count(n)
 		if count > maxdigits:
 			return False
 		return True
 
 	def worker(self):
 		pid = os.getpid()
-		try:		
+		try:
 			while True:
 				ch, title = self.inq.get(block=True)
 				if ch.strip() == "":
 					continue
-				#ch = preprocess(ch)
-				article = Article(ch, title)
-				#stripped = StringIO()
-				#self.parseWiki(StringIO(ch), stripped)
-				#stripped.seek(0)
-				#parsed = self.tokenizer.tokenize(stripped.getvalue())
-				self.outq.put(str(article))
+				data = "[= %s =]\n\n%s" % (title, ch)
+				article = MediawikiHandler(data).parse()
+				del data
+				parsed = self.tokenizer.tokenize(article)
+				del article
+				self.outq.put(parsed)
+				del parsed
 		except Empty:
-			print("%d done, exiting" % pid)
+			pass
+			#print("Mediawiki parser done, exiting [PID %d]" % pid)
 	
-	def output_worker(self, fn, maxsentences=None):
+	def output_worker(self, fn, maxsentences=0):
 		pid = os.getpid()
 		try:
-			f = open(fn, 'w')
 			count = 0
 			while True:
-				sl = self.outq.get(block=True, timeout=5)
-				f.write(sl)
-				if maxsentences and count < maxsentences:
-					count += 1
-				if count == maxsentences: break
-				'''
+				if maxsentences > 0 and count >= maxsentences: 
+					break
+				f = open(fn, 'a')
 				sentencelist = self.outq.get(block=True, timeout=5)
 				for s in sentencelist:
+					if maxsentences > 0 and count >= maxsentences: 
+						break
 					if(self.heuristics(s.strip())):
 						f.write("%s\n" % s.strip())
-						if maxsentences and count < maxsentences:
-							count += 1
-					if count == maxsentences: break
-				if count == maxsentences: break
-				'''
-			f.close()
+						count += 1
+				f.close()
+				sys.stdout.write('\r%d' % count)
+				sys.stdout.flush()
+			sys.stdout.write("\r%d sentences written to %s.\n" % (count, fn))
+			sys.stdout.flush()
 		except Empty:
-			print("%d output worker done, exiting" % pid)
-	
-if __name__ == '__main__':
-	if len(sys.argv) == 3:
-		CorpusGenerator().generate(sys.argv[1], sys.argv[2]) #maxpages
-	elif len(sys.argv) == 4:
-		CorpusGenerator().generate(sys.argv[1], sys.argv[2], int(sys.argv[3]))
-	else: print("Fail. %s" % len(sys.argv))
+			pass
+			#print("Output worker done, exiting [PID %d]" % pid)
 

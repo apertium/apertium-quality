@@ -12,11 +12,6 @@ from datetime import datetime
 #import logging
 
 
-def checksum(data):
-	if isinstance(data, str):
-		data = data.encode('utf-8')
-	return str(sha1(data).hexdigest())
-
 def whereis(programs):
 	out = {}
 	for p in programs:
@@ -66,9 +61,6 @@ def retxt(data):
 	output = escape.sub(lambda o: o.group(1), data)
 	output = encap.sub(lambda o: o.group(1), output)
 	return output
-	
-#def is_transfer_rules(ext):
-#	return (is_tnx(ext) or is_rlx(ext))
 
 
 class Dictionary(object):
@@ -87,14 +79,11 @@ class Dictionary(object):
 
 		def startElement(self, tag, attrs):
 			if tag == "rule":
-				if "comment" in attrs:
-					self.rules.append(attrs.get("comment"))
-				else:
-					self.rules.append(None)
+				self.rules.append(attrs.get("comment", None))
 
 	def __init__(self, f):
-		self.fn = f
-		self.f = open(get_dix(f), 'rb')
+		self.f = f
+		self.dix = open(get_dix(f), 'rb')
 		self.lemmas = None
 		self.rules = None
 		
@@ -103,7 +92,7 @@ class Dictionary(object):
 			parser = make_parser()
 			handler = self.DIXHandler()
 			parser.setContentHandler(handler)
-			parser.parse(self.f)
+			parser.parse(self.dix)
 			self.lemmas = handler.lemmas
 		return self.lemmas
 	
@@ -113,7 +102,7 @@ class Dictionary(object):
 	def get_rules(self):
 		if not self.rules:
 			self.rules = {}
-			for i in get_file_family(self.fn):
+			for i in get_file_family(self.f):
 				ext = split_ext(i)[1]
 				if is_tnx(ext):
 					parser = make_parser()

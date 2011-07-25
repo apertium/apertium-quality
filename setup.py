@@ -4,7 +4,8 @@ distribute_setup.use_setuptools()
 from setuptools import setup, find_packages
 from os import listdir
 
-install_requires = ['pyyaml']#, 'argparse'], 'numpy', 'matplotlib']
+install_requires = ['lxml', 'pyyaml', 'mwtools']
+#, 'argparse'], 'numpy', 'matplotlib']
 
 try:
 	import argparse
@@ -16,13 +17,10 @@ try:
 except:
 	install_requires.append('ordereddict')
 
-#scripts = [ "bin/" + i for i in listdir("bin") if i[0] != '.' ]
-
 setup(
 	name = "apertium-quality",
-	version = "0.0",
+	version = "0.2",
 	packages = find_packages(),
-	#scripts = scripts,
 	install_requires = install_requires,
 
 	author = "Brendan Molloy",
@@ -32,10 +30,13 @@ setup(
 	keywords = "apertium nlp quality control framework",
 	entry_points = """
 	[console_scripts]
-	aq-hfsttest = apertium.quality.frontend.hfst_tester:main
+	aq-morftest = apertium.quality.frontend.morph_tester:main
 	aq-covtest = apertium.quality.frontend.coverage_tester:main
 	aq-regtest = apertium.quality.frontend.regression_tester:main
+	aq-gentest = apertium.quality.frontend.generation_tester:main
 	aq-ambtest = apertium.quality.frontend.ambiguity_tester:main
 	aq-htmlgen = apertium.quality.frontend.website_generator:main
+	aq-autotest = apertium.quality.frontend.auto_tester:main
+	aq-wikicrp = apertium.quality.frontend.corpus_extractor:main
 	"""
 )

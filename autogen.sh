@@ -54,7 +54,7 @@ fi
 
 OPTSIN="$*"
 get_opt
-eval $GETOPTS
+eval "$GETOPTS"
 
 if [ 'x'$PYTHON = 'x' ] ; then
 	PYTHON=`type -P python`
@@ -64,7 +64,7 @@ fi
 
 # BEGIN CONFIG
 if [ 'x'$VERBOSE = 'x' ] ; then
-	_VERBOSE=">/dev/null"	
+	_VERBOSE="2&>/dev/null"	
 else
 	unset _VERBOSE
 fi
@@ -111,8 +111,34 @@ if [ ! 'x'$_READY = 'xy' ] ; then
 fi
 
 # BEGIN INSTALLATION
+_install_nltk_prefixed() {
+	eval "$PYTHON -c 'import nltk' ${_VERBOSE}" && return
+	wget -qc https://github.com/downloads/bbqsrc/apertium-quality/nltk-3.0.1.tar.gz
+	tar xf nltk-3.0.1.tar.gz
+	pushd nltk-3.0.1
+	eval "$PYTHON setup-distutils.py install --prefix=${PREFIX} ${_VERBOSE}"
+	popd
+	rm -r nltk-3.0.1.tar.gz
+}
+
+_install_nltk() {
+	eval "$PYTHON -c 'import nltk' ${_VERBOSE}" && return
+	wget -qc https://github.com/downloads/bbqsrc/apertium-quality/nltk-3.0.1.tar.gz
+	tar xf nltk-3.0.1.tar.gz
+	pushd nltk-3.0.1
+	eval "$PYTHON setup-distutils.py install ${_VERBOSE}"
+	popd
+	rm -r nltk-3.0.1.tar.gz
+
+}
+
 _install_standalone() {
 	echo "Stub"
+}
+
+_install_lxml() {
+	eval "$PYTHON -c 'import lxml' ${_VERBOSE}" && return
+	echo "[-] lxml not found. ElementTree will be used."
 }
 
 _install_prefixed() {
@@ -123,7 +149,10 @@ _install_prefixed() {
 		exit 1
 	fi
 	echo "[*] Installing..."
-	eval $PYTHON setup.py install --prefix=${PREFIX} ${_VERBOSE}
+
+	eval "$PYTHON setup.py install --prefix=${PREFIX} ${_VERBOSE}"
+	_install_nltk_prefixed
+	_install_lxml
 
 	if [ -f $HOME/.bashrc ] ; then 
 		rc=$HOME/.bashrc
@@ -132,10 +161,13 @@ _install_prefixed() {
 	fi
 
 	if [ x"$rc" != 'x' ] ; then
-		$SED -i "s|source $HOME/\.apertium-quality||g" $rc
-		echo "source $HOME/.apertium-quality" >> $rc
+		grep ".apertium-quality" $rc 2&>/dev/null
+		if [ $? = 1 ] ; then
+			echo "source $HOME/.apertium-quality" >> $rc
+		fi
+		
 		echo "export PATH="'$PATH'":${PREFIX}/bin" > $HOME/.apertium-quality
-		echo 'export PYTHONPATH=$PYTHONPATH'"${PYTHONPATH}" >> $HOME/.apertium-quality
+		echo 'export PYTHONPATH="$PYTHONPATH:'"${PYTHONPATH}\"" >> $HOME/.apertium-quality
 		echo "[-] Restart your shell for the environment settings to take effect."
 	else
 
@@ -147,7 +179,8 @@ _install_prefixed() {
 
 _install() {
 	echo "[*] Installing..."
-	eval $PYTHON setup.py install ${_VERBOSE}
+	eval "$PYTHON setup.py install ${_VERBOSE}"
+	_install_nltk
 }
 
 if [ $_PREFIXED -gt 0 ] ; then

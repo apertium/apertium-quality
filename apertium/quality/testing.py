@@ -1,23 +1,203 @@
 # -*- coding: utf-8 -*-
 
 import os.path, re, yaml
+from os.path import dirname
 pjoin = os.path.join
 from collections import defaultdict, Counter, OrderedDict
 
-import xml.etree.cElementTree as etree
+try:
+	from lxml import etree
+	from lxml.etree import Element, SubElement
+except:
+	import xml.etree.ElementTree as etree
+	from xml.etree.ElementTree import Element, SubElement
 import urllib.request
-
+import shlex
+import itertools
 from multiprocessing import Process, Manager
 from subprocess import Popen, PIPE
 from io import StringIO
+from datetime import datetime
+from hashlib import sha1
 
-from apertium import whereis, destxt, retxt, checksum
-from apertium.quality import Statistics
+from apertium import whereis, destxt, retxt, Dictionary
 
 ARROW = "\u2192"
 
+# TODO: add self.results dict() to all objects
+class UncleanWorkingDirectoryException(Exception):
+	pass
 
-class RegressionTest(object):
+class Test(object):
+	"""Abstract class for Test objects
+	
+	It is recommended that print not be used within a Test class.
+	Use a StringIO instance and .getvalue() in get_output().
+	"""
+	
+	def __str__(self):
+		"""Will return to_string method's content if exists, 
+		otherwise default to parent class
+		"""
+		try: return self.to_string()
+		except: return object.__str__(self)
+	
+	def _checksum(self, data):
+		"""Returns checksum hash for given data (currently SHA1) for the purpose
+		of maintaining integrity of test data.
+		"""
+		if hasattr(data, 'encode'):
+			data = data.encode('utf-8')
+		return sha1(data).hexdigest()
+	
+	def _svn_revision(self, directory):
+		"""Returns the SVN revision of the given dictionary directory"""
+		res = Popen('svnversion', stdout=PIPE, close_fds=True).communicate()[0].decode('utf-8').strip()
+		try:
+			int(res) 
+			return res
+		except:
+			UncleanWorkingDirectoryException("Unclean working directory. Result: %s" % res)
+	
+	def run(self, *args, **kwargs):
+		"""Runs the actual test
+		
+		Parameters: none
+		Returns: integer >= 0 <= 255  (exit value)
+		"""
+		raise NotImplementedError("Required method `run` was not implemented.")
+	
+	def to_xml(self, *args, **kwargs):
+		"""Output XML suitable for saving in Statistics format.
+		It is recommended that you use etree for creating the tree.
+		
+		Parameters: none
+		Returns: (string, string)
+			first being parent node, second being xml
+		"""
+		raise NotImplementedError("Required method `to_xml` was not implemented.")
+	
+	def to_string(self, *args, **kwargs):
+		"""Prints the output of StringIO instance and other printable output.
+		
+		Parameters: none
+		Returns: string
+		"""
+		raise NotImplementedError("Required method `to_string` was not implemented.")
+
+class GenerationTest(Test):
+	def __init__(self, direc=None, mode=None, corpus=None, **kwargs):
+		self.directory = kwargs.get('direc', direc)
+		self.mode = kwargs.get('mode', mode)
+		self.corpus = kwargs.get('corpus', corpus)
+		if None in (self.directory, self.mode, self.corpus):
+			raise ValueError("direc, mode or corpus missing.")
+		
+		self.lang = '-'.join(self.mode.rsplit('-')[0:2])
+		whereis(["apertium", "lt-proc"])
+	
+	def get_transfer(self, data):
+		count = Counter()
+		out = StringIO()
+		buf = StringIO()
+		in_word = False
+		
+		for i in data:
+			if i == "^":
+				in_word = True
+			elif i == "$":
+				out.write("%s$\n" % buf.getvalue())
+				count[buf.getvalue()] += 1
+				buf = StringIO()
+				in_word = False
+			if in_word:
+				buf.write(i)
+		
+		return out.getvalue().split('\n')
+					
+	def run(self):
+		app = Popen(['apertium', '-d', self.directory, '%s' % self.mode], stdin=open(self.corpus), stdout=PIPE)
+		#app = Popen("cat %s | apertium -d %s %s" % (self.corpus, self.directory, self.mode), 
+		#		stdin=PIPE, stdout=PIPE, shell=True)
+		res = app.communicate()[0].decode('utf-8')
+		transfer = self.get_transfer(res)
+		
+		stripped = StringIO()
+		for word, count in Counter(transfer).most_common():
+			stripped.write("%d\t%s\n" % (count, word))
+		stripped = stripped.getvalue()
+		
+		app = Popen(['lt-proc', '-d', "%s.autogen.bin" % pjoin(self.directory, self.lang)], stdin=PIPE, stdout=PIPE)
+		surface = app.communicate(stripped.encode('utf-8'))[0].decode('utf-8')
+		nofreq = re.sub(r'^ *[0-9]* \^', '^', stripped)
+		
+		gen_errors = StringIO()
+		for i in itertools.zip_longest(surface.split('\n'), nofreq.split('\n'), fillvalue=""):
+			gen_errors.write("{:<16}{:<16}".format(*list(str(x) for x in i)))
+		gen_errors = gen_errors.getvalue().split('\n')
+
+		multiform = []
+		multibidix = []
+		tagmismatch = []
+		
+		for i in gen_errors:
+			if "#" in i:
+				if re.search(r'[0-9] #.*\/', i):
+					multibidix.append(i)
+				elif re.search(r'[0-9] #', i) and not '/' in i:
+					tagmismatch.append(i)
+			elif "/" in i:
+				multiform.append(i)
+		
+		print("DEBUG:")
+		print("raw:\n%s\n" % res)
+		print("transfer:\n%s\n" % transfer)
+		print("stripped:\n%s\n" % stripped)
+		print("surface:\n%s\n" % surface)
+		print("nofreq:\n%s\n" % nofreq)
+		print('\nmultiform: %s' % multiform)
+		print('multibidix: %s' % multibidix)
+		print("tagmismatch %s" % tagmismatch)
+		
+		self.multiform = multiform
+		self.multibidix = multibidix
+		self.tagmismatch = tagmismatch
+
+	#def to_xml(self):
+	#	pass
+	
+	def to_string(self):
+		out = StringIO()
+		border = "=" * 80
+		
+		out.write(border + "\n")
+		out.write("Multiple surface forms for a single lexical form\n")
+		out.write(border + "\n")
+		out.write("\n".join(self.multiform)+'\n\n')
+		
+		out.write(border + "\n")
+		out.write("Multiple bidix entries for a single source language lexical form\n")
+		out.write(border + "\n")
+		out.write("\n".join(self.multibidix)+"\n\n")
+		
+		out.write(border + "\n")
+		out.write("Tag mismatch between transfer and generation\n")
+		out.write(border + "\n")
+		out.write("\n".join(self.tagmismatch)+"\n\n")
+		
+		out.write(border + "\n")
+		out.write("Summary\n")
+		out.write(border + "\n")
+		
+		out.write("%6d %s\n" % (len(self.multiform), "multiform"))
+		out.write("%6d %s\n" % (len(self.multibidix), "multibidix"))
+		out.write("%6d %s\n" % (len(self.tagmismatch), "tagmismatch"))
+		out.write("Total: %d\n" % (len(self.multiform) + len(self.multibidix) + len(self.tagmismatch)))
+		
+		return out.getvalue()
+		
+		
+class RegressionTest(Test):
 	wrg = re.compile(r"{{test\|(.*)\|(.*)\|(.*)}}")
 	ns = "{http://www.mediawiki.org/xml/export-0.3/}"
 	program = "apertium"
@@ -27,17 +207,19 @@ class RegressionTest(object):
 		mode = kwargs.get('mode', mode)
 		directory = kwargs.get('directory', directory)
 		if None in (url, mode):
-			raise TypeError("Url or mode parameter missing.")
+			raise ValueError("Url or mode parameter missing.")
 
 		whereis([self.program])
-		if not "Special:Export" in url:
-			print("Warning: URL did not contain Special:Export.")
+		#if not "Special:Export" in url:
+		#	print("Warning: URL did not contain Special:Export.")
 		self.mode = mode
+		
 		self.directory = directory
 		if url.startswith('http'):
 			self.tree = etree.parse(urllib.request.urlopen(url))
 		else:
 			self.tree = etree.parse(open(url))
+		
 		self.passes = 0
 		self.total = 0
 		text = None
@@ -75,6 +257,7 @@ class RegressionTest(object):
 			for n, test in enumerate(self.tests[side].items()):
 				if n >= len(self.results):
 					#raise AttributeError("More tests than results.")
+					self.out.write("WARNING: more tests than results!\n")
 					continue
 				res = self.results[n].split("[_]")[0].strip()
 				orig = test[0].split("[_]")[0].strip()
@@ -88,6 +271,8 @@ class RegressionTest(object):
 					self.out.write("\t+ %s\n" % res)
 				self.total += 1
 				self.out.write('\n')
+			self.out.write("Passes: %d/%d, Success rate: %.2f%%\n" 
+					% (self.passes, self.total, self.get_total_percent()))
 		return 0
 
 	def get_passes(self):
@@ -100,34 +285,108 @@ class RegressionTest(object):
 		return self.total
 	
 	def get_total_percent(self):
-		return "%.2f" % (float(self.passes)/float(self.total)*100)
+		if self.get_total() == 0:
+			return 0
+		return float(self.passes)/float(self.total)*100
 	
-	def save_statistics(self, f):		
-		stats = Statistics(f)
-		ns = "{http://www.mediawiki.org/xml/export-0.3/}"
-		page = self.tree.getroot().find(ns + 'page')
-		rev = page.find(ns + 'revision').find(ns + 'id').text
-		title = page.find(ns + 'title').text
-		stats.add_regression(title, rev, self.passes, self.total, self.get_total_percent())
-		stats.write()
+	def to_xml(self):
+		ns = self.ns
+		page = self.tree.getroot().find(ns + "page")
+		
+		q = Element('title')
+		q.attrib['value'] = page.find(ns + 'title').text
+		q.attrib['revision'] = page.find(ns + 'revision').find(ns + 'id').text
+		
+		r = SubElement(q, 'revision', 
+					value=self._svn_revision(self.directory),
+					timestamp=datetime.utcnow().isoformat())
+		
+		SubElement(r, 'percent').text = "%.2f" % self.get_total_percent()
+		SubElement(r, 'total').text = str(self.get_total())
+		SubElement(r, 'passes').text = str(self.get_passes())
+		SubElement(r, 'fails').text = str(self.get_fails())
+		
+		return ("regression", etree.tostring(q))
 
-	def get_output(self):
-		print(self.out.getvalue())
-		percent = 0
-		if self.total > 0:
-			percent = float(self.passes) / float(self.total) * 100
-		print("Passes: %d/%d, Success rate: %.2f%%" % (self.passes, self.total, percent))
+	def to_string(self):
+		return self.out.getvalue().strip()
+
+'''
+class HfstCoverageTest(CoverageTest):
+	app = "hfst-lookup"
+	
+	def run(self):
+		if not self.result:
+			self.
+			
+			f = '\n'.join(self.f.read().split()) + '\n'
+			self.f.seek(0)
+			
+			proc = Popen([self.app, self.dct], stdin=PIPE, stdout=PIPE)
+			output = str(proc.communicate(f)[0].decode('utf-8')).split('\n\n')
+			
+			
+			unfound = []
+			found = 0 
+			
+			ding = False
+			for i in output:
+				for j in i.split('\n'):
+					for k in j.split():
+						if len(k) == 3 and k[-1].strip() == "+?":
+							unfound.append(k[0].strip())
+							ding = True
+					if ding == True:
+						ding = False
+						#blah
+'''						
+					
+class DictionaryTest(Test):
+	def __init__(self, f=None, **kwargs):
+		f = kwargs.get('f', f)
+		if f is None:
+			raise ValueError('f parameter missing.')
+		self.f = f
+		
+	def run(self):
+		self.dct = Dictionary(self.f)
+		self.dct.get_entries()
+		self.dct.get_rules()
+	
+	def to_xml(self):
+		q = Element('dictionary')
+		q.attrib["value"] = os.path.basename(self.dct.f)
+		#q.attrib["checksum"] = self._checksum(open(self.dct.f, 'rb').read())
+		
+		r = SubElement(q, "timestamp", value=datetime.utcnow().isoformat())
+		
+		SubElement(r, 'entries').text = str(len(self.dct.gen_entries()))
+		SubElement(r, 'unique-entries').text = str(len(self.dct.get_unique_entries()))
+		SubElement(r, 'rules').text = str(self.dct.get_rule_count())
+		
+		return ("general", etree.tostring(q))
+	
+	def to_string(self):
+		out = StringIO()
+		out.write("Entries: %d\n" % len(self.dct.get_entries()))
+		out.write("Unique entries: %d\n" % len(self.dct.get_unique_entries()))
+		out.write("Rules: %d\n" % self.dct.get_rule_count())
+		return out.getvalue().strip()
 
 
-class CoverageTest(object):
+class CoverageTest(Test):
+	app = "lt-proc"
+	
 	def __init__(self, f=None, dct=None, **kwargs):
 		f = kwargs.get('f', f)
 		dct = kwargs.get('dct', dct)
 		if None in (f, dct):
 			raise TypeError("f or dct parameter missing.")
-			
-		whereis(["lt-proc"])#, "apertium-destxt", "apertium-retxt"):
-		self.fn = f #TODO: make sure file exists
+		
+		open(dct) # test existence
+		whereis([self.app])
+		
+		self.fn = f
 		self.f = open(f, 'r')
 		self.dct = dct
 		self.result = None
@@ -139,7 +398,7 @@ class CoverageTest(object):
 			self.f.seek(0)
 
 			output = destxt(f).encode('utf-8')
-			proc = Popen(['lt-proc', self.dct], stdin=PIPE, stdout=PIPE)
+			proc = Popen([self.app, self.dct], stdin=PIPE, stdout=PIPE)
 			output = str(proc.communicate(output)[0].decode('utf-8'))
 			output = retxt(output) 
 			
@@ -168,6 +427,7 @@ class CoverageTest(object):
 	def get_top_unknown_words_string(self, c=20):
 		out = StringIO()
 		for word, count in self.get_top_unknown_words(c):
+			word = word.split('/')[0][1:]
 			out.write("%d\t %s\n" % (count, word))
 		return out.getvalue()
 		
@@ -176,33 +436,39 @@ class CoverageTest(object):
 		b = float(len(self.get_words()))
 		return a / b * 100
 	
-	def save_statistics(self, f):
-		stats = Statistics(f)
+	def to_xml(self):
+		q = Element('dictionary')
+		q.attrib["value"] = os.path.basename(self.dct)
+		
+		
+		r = SubElement(q, "revision", 
+					value=self._svn_revision(dirname(self.dct)),
+					timestamp=datetime.utcnow().isoformat(),
+					checksum=self._checksum(open(self.dct, 'rb').read()))
+		
+		s = SubElement(r, 'corpus')
+		s.attrib["value"] = os.path.basename(self.fn)
+		s.attrib["checksum"] = self._checksum(open(self.fn, 'rb').read())
+		
+		SubElement(r, 'percent').text = "%.2f" % self.get_coverage()
+		SubElement(r, 'total').text = str(len(self.get_words()))
+		SubElement(r, 'known').text = str(len(self.get_known_words()))
+		SubElement(r, 'unknown').text = str(len(self.get_unknown_words()))
 		
 		wrx = re.compile(r"\^(.*)/")
-
-		cfn = os.path.basename(self.fn)
-		dfn = os.path.basename(self.dct)
-		cck = checksum(self.f.read())
-		dck = checksum(open(self.dct).read())
-		cov = "%.2f" % self.get_coverage()
-		words = len(self.get_words())
-		kwords = len(self.get_known_words())
-		ukwords = len(self.get_unknown_words())
-		topukwtmp = self.get_top_unknown_words()
-		topukw = []
-		for word, count in topukwtmp:
-			topukw.append((wrx.search(word).group(1), count))
+		s = SubElement(r, 'top')
+		for word, count in self.get_top_unknown_words():
+			SubElement(s, 'word', count=str(count)).text = wrx.search(word).group(1)
 		
-		stats.add_coverage(cfn, dfn, cck, dck, cov, words, kwords, ukwords, topukw)
-		stats.write()
+		return ("coverage", etree.tostring(q))
 
-	def get_output(self):
-		print("Number of tokenised words in the corpus:",len(self.get_words()))
-		print("Number of known words in the corpus:",len(self.get_known_words()))
-		print("Coverage: %.2f%%" % self.get_coverage())
-		print("Top unknown words in the corpus:")
-		print(self.get_top_unknown_words_string())
+	def to_string(self):
+		out = StringIO()
+		out.write("Number of tokenised words in the corpus: %s\n" % len(self.get_words()))
+		out.write("Coverage: %.2f%%\n" % self.get_coverage())
+		out.write("Top unknown words in the corpus:\n")
+		out.write(self.get_top_unknown_words_string())
+		return out.getvalue().strip()
 
 
 '''class VocabularyTest(object):
@@ -254,7 +520,7 @@ class CoverageTest(object):
 '''
 
 
-class AmbiguityTest(object):
+class AmbiguityTest(Test):
 	delim = re.compile(":[<>]:")
 
 	def __init__(self, f, **kwargs):
@@ -285,27 +551,44 @@ class AmbiguityTest(object):
 		self.get_results()
 		self.get_ambiguity()
 		return 0
+	
+	def to_xml(self):
+		q = Element('dictionary')
+		q.attrib["value"] = self.f
 
-	def save_statistics(self, f):
-		stats = Statistics(f)
-		fck = checksum(open(self.f, 'rb').read())
-		stats.add_ambiguity(self.f, fck, self.surface_forms, self.total, self.average)
-		stats.write()
+		r = SubElement(q, "revision", value=self._svn_revision(dirname(self.f)),
+					timestamp=datetime.utcnow().isoformat(),
+					checksum=self._checksum(open(self.f, 'rb').read()))
 
-	def get_output(self):
-		print("Total surface forms: %d" % self.surface_forms)
-		print("Total analyses: %d" % self.total)
-		print("Average ambiguity: %.2f" % self.average)
+		SubElement(r, 'surface-forms').text = str(self.surface_forms)
+		SubElement(r, 'analyses').text = str(self.total)
+		SubElement(r, 'average').text = str(self.average)
+		
+		return ("ambiguity", etree.tostring(q))
+
+	def to_string(self):
+		out = StringIO("Total surface forms: %d\n" % self.surface_forms)
+		out.write("Total analyses: %d\n" % self.total)
+		out.write("Average ambiguity: %.2f" % self.average)
+		return out.getvalue().strip()
 
 
-class HfstTest(object):
+class MorphTest(Test):
 	class AllOutput(StringIO):
-		def get_output(self):
-			return self.getvalue()
-
+		def __str__(self):
+			return self.to_string()
+		
+		def title(self, *args): pass
+		def success(self, *args): pass
+		def failure(self, *args): pass		
+		def result(self, *args): pass
+		
 		def final_result(self, hfst):
 			text = "Total passes: %d, Total fails: %d, Total: %d\n"
 			self.write(colourise(text % (hfst.passes, hfst.fails, hfst.fails+hfst.passes), 2))
+		
+		def to_string(self):
+			return self.getvalue().strip()	
 
 	class NormalOutput(AllOutput):
 		def title(self, text):
@@ -326,15 +609,6 @@ class HfstTest(object):
 			self.write(colourise(text % (test, p, f, p+f), 2))
 
 	class CompactOutput(AllOutput):
-		def title(self, *args):
-			pass
-
-		def success(self, *args):
-			pass
-
-		def failure(self, *args):
-			pass
-
 		def result(self, title, test, counts):
 			p = counts["Pass"]
 			f = counts["Fail"]
@@ -344,8 +618,9 @@ class HfstTest(object):
 			else:
 				self.write(colourise("[PASS] %s\n" % out))
 			
-	def __init__(self, **kwargs):
+	def __init__(self, f=None, **kwargs):
 		self.args = dict(kwargs)
+		self.f = self.args.get('test_file', f)
 
 		self.fails = 0
 		self.passes = 0
@@ -359,17 +634,17 @@ class HfstTest(object):
 
 	def load_config(self):
 		global colourise
-		f = yaml.load(open(self.args['test_file'][0]), _OrderedDictYAMLLoader)
+		f = yaml.load(open(self.f), _OrderedDictYAMLLoader)
 		
-		section = self.args['section'][0]
+		section = self.args['section']
 		if not section in f["Config"]:
 			raise AttributeError("'%s' not found in Config of test file." % section)
 		
-		self.program = f["Config"][section].get("App", "hfst-lookup")
-		whereis([self.program])
+		self.program = shlex.split(self.args.get('app') or f["Config"][section].get("App", "hfst-lookup"))
+		whereis([self.program[0]])
 
-		self.gen = f["Config"][section].get("Gen", None)
-		self.morph = f["Config"][section].get("Morph", None)
+		self.gen = self.args.get('gen') or f["Config"][section].get("Gen", None)
+		self.morph = self.args.get('morph') or f["Config"][section].get("Morph", None)
 	
 		if self.gen == self.morph == None:
 			raise AttributeError("One of Gen or Morph must be configured.")
@@ -379,9 +654,9 @@ class HfstTest(object):
 				raise IOError("File %s does not exist." % i)
 		
 		if self.args.get('compact'):
-			self.out = HfstTest.CompactOutput()
+			self.out = MorphTest.CompactOutput()
 		else:
-			self.out = HfstTest.NormalOutput()
+			self.out = MorphTest.NormalOutput()
 		
 		if self.args.get('verbose'):
 			self.out.write("`%s` will be used for parsing dictionaries.\n" % self.program)
@@ -423,13 +698,17 @@ class HfstTest(object):
 
 		def parser(self, d, f, tests):
 			keys = tests.keys()
-			app = Popen([self.program, f], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+			app = Popen(self.program + [f], stdin=PIPE, stdout=PIPE, stderr=PIPE)
 			args = '\n'.join(keys) + '\n'
-			res = str(app.communicate(args.encode('utf-8'))[0].decode('utf-8')).split('\n\n')
-			if app.returncode > 0:
-				self.results[d] = res[0]
-			elif res[0] == '':
-				self.results[d] = "Possible segfault"
+			
+			res, err = app.communicate(args.encode('utf-8'))
+			res = res.decode('utf-8').split('\n\n')
+			err = err.decode('utf-8').strip()
+
+			if app.returncode != 0:
+				self.results['err'] = "\n".join(
+					[i for i in [res[0], err, "(Error code: %s)" % app.returncode] if i != '']
+				)
 			else:
 				self.results[d] = self.parse_fst_output(res)
 		
@@ -462,8 +741,8 @@ class HfstTest(object):
 			f = "morph"
 			tests = invert_dict(self.tests[data])
 		
-		if isinstance(self.results[f], str):
-			raise LookupError('%s had an error:\n%s' % (self.program, self.results[f]))
+		if self.results.get('err'):
+			raise LookupError('`%s` had an error:\n%s' % (self.program, self.results['err']))
 		
 		c = len(self.count)
 		d = "%s (%s)" % (data, desc)
@@ -485,7 +764,6 @@ class HfstTest(object):
 				if not form in actual_results:
 					missing.add(form)
 
-			
 			for form in actual_results:
 				if not form in expected_results:
 					invalid.add(form)
@@ -532,23 +810,44 @@ class HfstTest(object):
 						parsed[key].add(results[1].strip())
 		return parsed
 
-	def save_statistics(self, f):
-		stats = Statistics(f)
-		stats.add_hfst(self.args['test_file'][0], checksum(open(self.args['test_file'][0]).read()), 
-					self.gen, checksum(open(self.gen, 'rb').read()), 
-					self.morph, checksum(open(self.morph, 'rb').read()),
-					self.count, self.passes, self.fails)
-		stats.write()
+	def to_xml(self):
+		q = Element('config')
+		q.attrib["value"] = self.f
+		
+		r = SubElement(q, "revision", value=self._svn_revision(dirname(self.f)),
+					timestamp=datetime.utcnow().isoformat(),
+					checksum=self._checksum(open(self.f, 'rb').read()))
+		
+		s = SubElement(r, 'gen')
+		s.attrib["value"] = self.gen
+		s.attrib["checksum"] = self._checksum(open(self.gen, 'rb').read())
+		
+		s = SubElement(r, 'morph')
+		s.attrib["value"] = self.morph
+		s.attrib["checksum"] = self._checksum(open(self.morph, 'rb').read())
+		
+		SubElement(r, 'total').text = str(self.passes + self.fails)
+		SubElement(r, 'passes').text = str(self.passes)
+		SubElement(r, 'fails').text = str(self.fails)
+		
+		s = SubElement(r, 'tests')
+		for k, v in self.count.items():
+			t = SubElement(s, 'test')
+			t.text = str(k)
+			t.attrib['fails'] = str(v["Fail"])
+			t.attrib['passes'] = str(v["Pass"])
 
-	def get_output(self):
-		print(self.out.get_output())
+		return ("morph", etree.tostring(r))
+
+	def to_string(self):
+		return self.out.getvalue().strip()
 
 
 
 # SUPPORT FUNCTIONS
 
 def string_to_list(data):
-	if isinstance(data, bytes): raise TypeError("Function does not accept bytes as input.")
+	if isinstance(data, bytes): return [data.decode('utf-8')]
 	elif isinstance(data, str): return [data]
 	else: return data
 	
