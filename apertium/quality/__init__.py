@@ -1,16 +1,11 @@
-try:
-	import matplotlib
-	matplotlib.use('Agg') # stops it from using X11 and breaking
-	import matplotlib.pyplot as plt
-except:
-	matplotlib = None
-
-try:
-	from mako.template import Template
-	from mako.lookup import TemplateLookup
-except:
-	Template = None
-	TemplateLookup = None
+from collections import defaultdict, OrderedDict
+from datetime import datetime
+from textwrap import dedent
+from io import StringIO
+import re
+import os 
+import json
+import urllib.request
 
 try:
 	from lxml import etree
@@ -19,39 +14,245 @@ except:
 	import xml.etree.ElementTree as etree
 	from xml.etree.ElementTree import Element, SubElement
 
-from collections import defaultdict, OrderedDict
-import re, os
 pjoin = os.path.join
-from io import StringIO
-from textwrap import dedent
 
-from datetime import datetime
 
 class ParseError(Exception):
+	"""Exception for parsing errors."""
 	pass
 
 def from_isoformat(t):
+	"""Converts time from ISO-8601 string to datetime object"""
 	return datetime.strptime(t, "%Y-%m-%dT%H:%M:%S.%f")
 
 
 class Webpage(object):
-	#ns = "{http://www.w3.org/1999/xhtml}"
+	"""Generate a webpage and supporting files from a given Statistics file"""
 	space = re.compile('[ /:\n]')
+	head = """<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+	<title>JS Stats</title>
+{scripts}
+	<link rel="stylesheet" type="text/css" href="style.css" />
+	<link rel="stylesheet" type="text/css" href="menu.css" />
+</head>"""
+	menu_css = """ul { 
+	list-style: none; 
+}
+
+.arrow:after {
+	content: " \xbb ";
+}
+/* 
+	LEVEL ONE
+*/
+ul.dropdown { 
+	position: relative; 
+}
+
+ul.dropdown li { 
+	font-weight: bold; 
+	float: left; 
+	zoom: 1; 
+	background: #ccc; 
+}
+
+ul.dropdown a:hover { 
+	color: #000; 
+}
+
+ul.dropdown a:active { 
+	color: #ffa500; 
+}
+
+ul.dropdown li a { 
+	display: block; 
+	padding: 4px 8px; 
+	border-right: 1px solid #333;
+	color: #222; 
+}
+
+ul.dropdown li:last-child a { 
+	border-right: none; 
+} /* Doesn't work in IE */
+
+ul.dropdown li.hover, ul.dropdown li:hover { 
+	background: #F3D673; 
+	color: black; 
+	position: relative; 
+}
+
+ul.dropdown li.hover a { 
+	color: black; 
+}
+
+
+/* 
+	LEVEL TWO
+*/
+ul.dropdown ul 						{ width: 220px; visibility: hidden; position: absolute; top: 100%; left: 0; }
+ul.dropdown ul li 					{ font-weight: normal; background: #f6f6f6; color: #000; 
+									  border-bottom: 1px solid #ccc; float: none; }
+									  
+                                    /* IE 6 & 7 Needs Inline Block */
+ul.dropdown ul li a					{ border-right: none; width: 100%; display: inline-block; } 
+
+/* 
+	LEVEL THREE
+*/
+ul.dropdown ul ul 					{ left: 100%; top: 0; }
+ul.dropdown li:hover > ul 			{ visibility: visible; }"""
+
+	css = """* {
+	padding: 0;
+	margin: 0;
+}
+
+"""
+	body = """<body>
+<div id="container" class="minimal">
+	<div id="header">
+		<h1 id="title">{title}</h1>
+		<h2 id="subtitle"></h2>
+		<h3 id="subsubtitle"></h3>
+		<ul id="menu" class="dropdown"></ul>
+		Save as: <a onclick="saveSvg()">SVG</a> <a onclick="savePng()">PNG(800)</a> <a onclick="savePng(1024, 768)">PNG(1024)</a>
+	</div>
+	<div id="chart"></div>
+	<div id="footer">{footer}</div>
+</div>
+</body>"""
+
+	base = """<!DOCTYPE html>
+<html>
+{head}
+{body}
+</html>
+"""
+
+	js = """var data = %s;
+var w = 800 - 20;
+var h = Math.round(window.innerHeight / 2);
+var title = null;
+var cur_data = null;
+var div = "chart";
+var chart = null;
+
+function setData(title, subtitle, dat) {
+	$("#title").empty().append(title);
+	$("#subtitle").empty().append(subtitle);
+	$("#subsubtitle").empty().append(dat);
+	cur_data = data[title][subtitle][dat];
+	$("#" + div).empty();
+	makeChart();
+}
+
+function makeChart() {
+	chart = Raphael(div, w, h);
+	chart.lineChart({
+		data: cur_data,
+		width: w-10,
+		height: Math.round(window.innerHeight / 2),
+		show_area: true,
+		x_labels_step: Math.round(cur_data.data.length / 5),
+		y_labels_count: 4,
+		mouse_coords: 'rect',
+		gutter: {
+			top: 12,
+			bottom: 24,
+			left: 0,
+			right: 0
+		},
+		colors: {
+			master: '#01A8F0'
+		},
+		hide_dots: 30
+	});
+}
+
+function generateMenu() {
+	var menu = $("<ul id='menu' class='dropdown'></ul>");
 	
+	var ul_i = $("<ul class='sub_menu'></ul>");
+	for(var i in data) {
+		var node_i = $("<li><a>"+i+"</a></li>");
+		
+		var ul_ii = $("<ul class='sub_menu'></ul>");
+		for(var ii in data[i]) {
+			var node_ii = $("<li><a>"+ii+"</a></li>");
+			
+			var ul_iii = $("<ul class='sub_menu'></ul>");
+			for(var iii in data[i][ii]) {
+				var link = $("<li><a>"+iii+"</a></li>");
+				link.attr("onclick", "setData('"+i+"', '"+ii+"', '"+iii+"')");
+				ul_iii.append(link);
+			}
+			
+			node_ii.append(ul_iii);
+			ul_ii.append(node_ii);
+		}
+		
+		node_i.append(ul_ii);
+		ul_i.append(node_i);
+	} 
+	
+	var li = $("<li><a id='subtitle'>Menu</a></li>");
+	li.append(ul_i);
+	menu.append(li);
+	$("#menu").replaceWith(menu);
+	$("ul.dropdown li ul li:has(ul)").find("a:first").addClass("arrow");//.append(" &raquo; ");
+}
+
+function saveSvg() {
+	$("#chart > svg > desc").remove(); // Raphael, escape your umlauted e's man.
+	var svgElement = $("#chart > svg")[0];
+	var svg = (new XMLSerializer()).serializeToString(svgElement);
+	window.open("data:image/svg+xml;charset=utf-8;base64,"+btoa(svg));
+	delete svg;
+}
+
+function savePng(pw, ph) {
+	var canvas = $("<canvas />")[0];
+	canvas.height = ph || 600;
+	canvas.width = pw || 800;
+	canvg(canvas, new XMLSerializer().serializeToString($("svg")[0]));
+	window.open(canvas.toDataURL());
+	delete canvas;
+}
+
+window.onload = function() {
+	generateMenu();
+	(function() {for (var i in data) { for (var ii in data[i]) { for (var iii in data[i][ii]) { 
+		title = iii; setData(i, ii, iii); return;  }}}; })(); //data[i][ii][iii];
+};
+
+$(function(){
+
+    $("ul.dropdown li").hover(function(){
+    
+        $(this).addClass("hover");
+        $('ul:first',this).css('visibility', 'visible');
+    
+    }, function(){
+    
+        $(this).removeClass("hover");
+        $('ul:first',this).css('visibility', 'hidden');
+    
+    });
+
+});
+
+/*
+window.onresize = function() {
+	w = window.innerWidth - 20;
+	h = window.innerHeight - 20;
+	
+	makeChart();
+}
+*/
+"""
+
 	def __init__(self, stats, fdir, title):
-		if not matplotlib:
-			raise ImportError("matplotlib not installed.")
-		if not Template or not TemplateLookup:
-			raise ImportError("mako not installed.")
-		
-		self.base = Template(base)
-		self.statblock = Template(statblock)
-		self.statdiv = Template(statdiv)
-		self.generaldiv = Template(generaldiv)
-		self.chronodiv = Template(chronodiv)
-		
-		#if not isinstance(stats, Statistics):
-		#	raise TypeError("Input must be Statistics object.")
 		self.stats = stats
 		try: os.makedirs(fdir)
 		except: pass
@@ -60,249 +261,62 @@ class Webpage(object):
 
 	def generate(self):
 		footer = "Generated: %s" % datetime.utcnow().strftime("%Y-%m-%d %H:%M (UTC)")
-		divs = []
-		divs.append(self.generate_regressions())
-		divs.append(self.generate_coverages())
-		divs.append(self.generate_ambiguities())
-		divs.append(self.generate_hfsts())
-		# others
-		out = self.base.render(dirname=self.title, divs=divs, footer=footer)
 		
-		f = open(pjoin(self.fdir, "index.html"), 'w')
-		f.write(out)
-		f.close()
+		chart_data = {}
+		chart_data.update(self._coverage())
+		chart_data.update(self._regression())
+		chart_data.update(self._ambiguity())
+		chart_data.update(self._general())
 		
-		f = open(pjoin(self.fdir, "style.css"), 'w')
-		f.write(css)
-		f.close()
+		scripts = OrderedDict((
+				("jquery.js", "http://code.jquery.com/jquery-1.6.2.min.js"),
+				("raphael.js", "https://github.com/DmitryBaranovskiy/raphael/raw/master/raphael-min.js"),
+				("raphael_linechart.js", "https://github.com/bbqsrc/raphael-linechart/raw/master/js/raphael_linechart.js"),
+				("rgbcolor.js", "http://canvg.googlecode.com/svn/trunk/rgbcolor.js"),
+				("canvg.js", "http://canvg.googlecode.com/svn/trunk/canvg.js")
+		))
 		
-		f = open(pjoin(self.fdir, "stats.js"), 'w')
-		f.write(js)
-		f.close()
+		script_html = ''
+		for script, url in scripts.items():
+			script_html += '\t<script charset="utf-8" type="text/javascript" src="%s"></script>\n' % script
+			if not os.path.exists(pjoin(self.fdir, script)):
+				data = urllib.request.urlopen(url).read()
+				f = open(pjoin(self.fdir, script), 'wb')
+				f.write(data)
+				f.close()
+		script_html += '\t<script charset="utf-8" type="text/javascript" src="stats.js"></script>\n'
+				
+		writes = {
+				"stats.js": self.js % json.dumps(chart_data),
+				"index.html": self.base.format(head=self.head.format(scripts=script_html), body=self.body.format(title=self.title, footer=footer)),
+				"style.css": css, #self.css,
+				"menu.css": self.menu_css
+		}
 		
-	def generate_regressions(self):
-		images = self.plot_regressions()
+		for fn, data in writes.items():
+			f = open(pjoin(self.fdir, fn), 'w')
+			f.write(data)
+			f.close()
 		
-		divs = []
-		stat_type = "regression"
-		data = self.stats.get(stat_type)
-		stat_type_title = "Regression Tests"
-		
-		for cfg, rev in data.items():
-			tsk = list(rev.keys())
-			first = tsk[0]
-			last = tsk[-1]
-			
-			avg = 0.0
-			for i in rev.values():
-				avg += float(i['Percent'])
-			avg /= float(len(rev))
-			
-			gen_stats = {
-				"First test": first,
-				"Last test": last,
-				"Average": avg
-			}
-			
-			stat_title_human, stat_cksum = cfg, last
-			stat_title = self.space.sub('_', stat_title_human.lower())
-			general = self.generaldiv.render(stat_title=stat_title, stat_type=stat_type, gen_stats=gen_stats)
-			chrono = self.chronodiv.render(stat_title=stat_title, stat_type=stat_type, chrono_stats=rev)
-			stats = self.statdiv.render(stat_title_human=stat_title_human, stat_title=stat_title, stat_type=stat_type, 
-									stat_cksum=stat_cksum, chrono=chrono, general=general, images=images)
-			divs.append(stats)
-		
-		return self.statblock.render(stat_type=stat_type, stat_type_title=stat_type_title, divs=divs)
-			
-	def generate_coverages(self):
-		images = self.plot_coverage()
-		
-		divs = []
-		stat_type = "coverage"
-		data = self.stats.get(stat_type)
-		stat_type_title = "Coverage Tests"
-		
-		for cfg, rev in data.items():
-			tsk = list(rev.keys())
-			first = tsk[0]
-			last = tsk[-1]
-			
-			avg = 0.0
-			for i in rev.values():
-				avg += float(i['Percent'])
-			avg /= float(len(rev))
-			
-			gen_stats = {
-				"First test": first,
-				"Last test": last,
-				"Average": avg
-			}
-			
-			stat_title_human, stat_cksum = cfg, last
-			stat_cksum = stat_cksum.upper()
-			stat_title = self.space.sub('_', stat_title_human.lower())
-			general = self.generaldiv.render(stat_title=stat_title, stat_type=stat_type, gen_stats=gen_stats)
-			chrono = self.chronodiv.render(stat_title=stat_title, stat_type=stat_type, chrono_stats=rev)
-			stats = self.statdiv.render(stat_title_human=stat_title_human, stat_title=stat_title, stat_type=stat_type, 
-									stat_cksum=stat_cksum, chrono=chrono, general=general, images=images)
-			divs.append(stats)
-		
-		return self.statblock.render(stat_type=stat_type, stat_type_title=stat_type_title, divs=divs)
-	
-	def generate_ambiguities(self):
-		images = []#self.plot_regressions()
-		
-		divs = []
-		stat_type = "ambiguity"
-		data = self.stats.get(stat_type)
-		stat_type_title = "Ambiguity Tests"
-		
-		for cfg, rev in data.items():
-			tsk = list(rev.keys())
-			first = tsk[0]
-			last = tsk[-1]
-			
-			avg = 0.0
-			for i in rev.values():
-				avg += float(i['Average'])
-			avg /= float(len(rev))
-			
-			gen_stats = {
-				"First test": first,
-				"Last test": last,
-				"Overall average": avg
-			}
-			
-			stat_title_human, stat_cksum = cfg, last
-			stat_cksum = stat_cksum.upper()
-			stat_title = self.space.sub('_', stat_title_human.lower())
-			general = self.generaldiv.render(stat_title=stat_title, stat_type=stat_type, gen_stats=gen_stats)
-			chrono = self.chronodiv.render(stat_title=stat_title, stat_type=stat_type, chrono_stats=rev)
-			stats = self.statdiv.render(stat_title_human=stat_title_human, stat_title=stat_title, stat_type=stat_type, 
-									stat_cksum=stat_cksum, chrono=chrono, general=general, images=images)
-			divs.append(stats)
-		
-		return self.statblock.render(stat_type=stat_type, stat_type_title=stat_type_title, divs=divs)
-	
-	def generate_hfsts(self):
-		images = []#self.plot_regressions()
-		
-		divs = []
-		stat_type = "morph"
-		data = self.stats.get(stat_type)
-		stat_type_title = "Morph (HFST) Tests"
-		
-		for cfg, rev in data.items():
-			tsk = list(rev.keys())
-			first = tsk[0]
-			last = tsk[-1]
-			
-			gen_stats = {
-				"First test": first,
-				"Last test": last
-			}
-			
-			stat_title_human, stat_cksum = cfg, last
-			stat_cksum = stat_cksum.upper()
-			stat_title = self.space.sub('_', stat_title_human.lower())
-			general = self.generaldiv.render(stat_title=stat_title, stat_type=stat_type, gen_stats=gen_stats)
-			chrono = self.chronodiv.render(stat_title=stat_title, stat_type=stat_type, chrono_stats=rev)
-			stats = self.statdiv.render(stat_title_human=stat_title_human, stat_title=stat_title, stat_type=stat_type, 
-									stat_cksum=stat_cksum, chrono=chrono, general=general, images=images)
-			divs.append(stats)
-		
-		return self.statblock.render(stat_type=stat_type, stat_type_title=stat_type_title, divs=divs)
-	
-	# coverage over time
-	# number of rules over time
-	# mean ambiguity over time
-	# number of dict entries over time
-	# translation speed over time
-	# WER/PER/BLEU over time
-	# percentage of regression tests passed over time 
-	
-	'''def plot_coverages(self):
-		data = self.stats.get_coverages()
-		out = []
-		
-		def coverage_over_time(title, data):
-			plt.title(title)
-			plt.xlabel("Time")
-			plt.ylabel("Coverage (%)")
-	'''		
-			
-			
-	def plot_coverage(self):
-		coverage = self.stats.get('coverage')
-		out = []
-		
-		for dictionary, revisions in coverage.items():
-			title = "%s\n%s" % (dictionary, "Coverage Percentage Over Time")
-			
-			plt.title(title)
-			plt.xlabel("Revision")
-			plt.ylabel("Coverage (%)")
-			
-			x = list(revisions.keys())
-			y = [ i['Percent'] for i in revisions.values() ]
-			
-			x.insert(0, 0)
-			y.insert(0, 0)
-			
-			plt.plot(x, y)
-			plt.ylim(ymin=0, ymax=100)
-			plt.xlim(xmin=int(x[1]), xmax=int(x[-1]))
-			
-			png = "%s.png" % self.space.sub('_', title)
-			plt.savefig(pjoin(self.fdir, png))
-			out.append(png)
-			plt.clf()
-		return out
-		
-	def plot_regressions(self):
-		#def 
-		
-		out = []
-		regs = self.stats.get('regression')
-		
-		for title, reg in regs.items():
-			t = "%s\n%s" % (title, "Passes Over Time")
-			plt.title(t)
-			plt.xlabel('Revision')
-			plt.ylabel('Passes (%)')
-			
-			x = list(reg.keys())
-			x.insert(0, 0)
-			
-			y = [[0], [0], [0], [0]]
-			
-			for rev, vals in reg.items():
-				y[0].append(vals['Percent'])
-				y[1].append(vals['Total'])
-				y[2].append(vals['Passes'])
-				y[3].append(vals['Fails'])
-
-			plt.plot(x, y[0])
-			plt.ylim(ymin=0, ymax=100)
-			plt.xlim(xmin=int(x[1]), xmax=int(x[-1]))
-			png = "%s.png" % self.space.sub('_', t)
-			plt.savefig(pjoin(self.fdir, png))
-			out.append(png)
-			plt.clf()
-
-			t = "%s\n%s" % (title, "Statistics")
-			plt.title(t)
-			plt.ylabel('Passes (Green) - Fails (Red)')
-
-			plt.plot(x, y[1], 'b', x, y[2], 'g', x, y[3], 'r')
-			plt.xlim(xmin=int(x[1]), xmax=int(x[-1]))
-			png = "%s.png" % self.space.sub('_', t)
-			plt.savefig(pjoin(self.fdir, png))
-			out.append(png)
-			plt.clf()
+	def _coverage(self):
+		out = {'Coverage Testing':{}}
+		out['Coverage Testing']['Coverage Over Time'] = self.stats.get_raphael("coverage", "Percent", "Known", "Total")
 		return out
 	
+	def _regression(self):
+		out = {'Regression Testing':{}}
+		out['Regression Testing']['Regressions Over Time'] = self.stats.get_raphael("regression", "Percent", "Passes", "Total")
+		return out
 	
+	def _ambiguity(self):
+		out = {'Ambiguity Testing':{}}
+		out['Ambiguity Testing']['Mean Ambiguity Over Time'] = self.stats.get_raphael("ambiguity", "Average", "Average", "Surface Forms")
+		return out
+	
+	def _general(self):
+		out = {'Dictionary Testing':{}}
+		out['Dictionary Testing']['Dictionary Entries Over Time'] = self.stats.get_raphael("general", "Entries", "Entries", "Unique Entries")
+		return out
 
 class Statistics(object):
 	version = "0.1"
@@ -404,11 +418,45 @@ class Statistics(object):
 		if root is None:
 			return dict()
 		
-		out = defaultdict(dict)
 		return self.elements[tag](root)
 
+	def get_raphael(self, tag, data, lines1, lines2):
+		"""Get output suitable for JSONing for Raphael charts"""
+		out = {}
+		dat = self.get(tag)
+		
+		for key, val in dat.items():
+			out[key] = defaultdict(list)
+			
+			for k, v in val.items():
+				if len(out[key]) == 0 or out[key].get('data')[-1] != v[data]:
+					out[key]['labels'].append(k)
+					out[key]['data'].append(v[data])
+					out[key]['lines1'].append("%s: %s" % (lines1, v[lines1]))
+					out[key]['lines2'].append("%s: %s" % (lines2, v[lines2]))
+		
+		return out			
+
 	def get_general(self, root):
-		return dict() # stub
+		dicts = defaultdict(dict)
+		
+		for d in root.getiterator(self.ns + "dictionary"):
+			dct = d.attrib['value']
+			for rev in d.getiterator(self.ns + 'revision'):
+				r = rev.attrib['value']
+				
+				dicts[dct][r] = {
+					"Timestamp": rev.attrib['timestamp'],
+					"Entries": rev.find(self.ns + "entries"),
+					"Unique Entries": rev.find(self.ns + "unique-entries"),
+					"Rules": rev.find(self.ns + "rules")
+				}
+		
+		out = dict()
+		for k, v in dicts.items():
+			out[k] = OrderedDict(sorted(v.items()))
+
+		return out
 	
 	def get_regression(self, root):
 		regressions = defaultdict(dict)
@@ -521,8 +569,7 @@ class Statistics(object):
 
 		return out	
 
-css = """
-* {
+css = """* {
   margin: 0;
   padding: 0; }
 
@@ -596,8 +643,8 @@ div.minimal {
   div.minimal p {
     margin: 1em 0;
     line-height: 1.5em; }
-  div.minimal ul {
-    margin: 1em 0 1em 1em; }
+  /*div.minimal ul {
+    margin: 1em 0 1em 1em; }*/
   div.minimal ol {
     margin: 1em 0 1em 1.5em; }
   div.minimal blockquote {
@@ -639,132 +686,4 @@ div.minimal {
     color: #999999; }
     div.minimal pre.console span.command {
       color: #dddddd; }
-"""
-
-js = """function toggle(id)
-{
-	var div = document.getElementById(id);
-	
-	if (div.style.display == 'block') {
-		div.style.display = 'none';
-	}
-	else {
-		div.style.display = 'block';
-	}
-}
-
-function init() 
-{
-	var cdivs = document.getElementsByClassName("cdiv");
-	for (var i = 0; i < cdivs.length; ++i) {
-		cdivs[i].style.display = "none";
-	}
-}
-
-window.addEventListener("load", init, false);
-"""
-
-base = """<!DOCTYPE html>
-<html>
-<head>
-	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-	<title>Statistics - ${dirname}</title>
-	<script type="application/javascript" src="stats.js"></script>
-  	<link rel="stylesheet" href="style.css" type="text/css" />
-</head>
-
-<body>
-<div id="container" class="minimal">
-
-<div id="header">
-	<h1>${dirname}</h1>
-</div>
-
-<!-- divs gonna div -->
-% for div in divs:
-${div}
-% endfor
-
-<div id="footer">
-	${footer}
-</div>
-
-</div>
-</body>
-</html>
-"""
-
-statblock = """
-<div id="${stat_type}" class="s-container">
-	<h1>${stat_type_title}</h1>
-	
-	% for div in divs:
-	${div}
-	% endfor
-</div>
-"""
-
-statdiv = """
-	<div id="${stat_type}-${stat_title}" class="s-stats">
-		<h1>${stat_title_human}</h1>
-		<h2>${stat_cksum}</h2>
-		<div id="${stat_type}-${stat_title}-imgs" class="s-imgs">
-			% for src in images:
-			<a href="${src}"><img src="${src}" /></a>
-			% endfor
-		</div>
-	
-		<div id="${stat_type}-${stat_title}-data" class="s-data">
-
-			${general}
-			
-			${chrono}
-
-			<hr />
-		</div>
-	</div>
-"""
-
-generaldiv = """
-			<div id="${stat_type}-${stat_title}-general" class="s-general">
-				<h1>General Statistics</h1>
-				<table>
-				% for left, right in gen_stats.items():
-				<tr>
-					<td>${left}:</td>
-					<td>${right}</td>
-				</tr>
-				% endfor
-				</table>
-			</div>
-"""
-
-chronodiv = """
-			<div id="${stat_type}-${stat_title}-chrono" class="s-chrono">
-				<h1>Chronological Statistics</h1>
-				<ul>
-				% for c, date in enumerate(reversed(list(chrono_stats.keys()))):
-					<li>
-						<a href="javascript:toggle('${stat_type}-${stat_title}-chrono-${c}-div')">${date}</a>
-						<div class="cdiv" id="${stat_type}-${stat_title}-chrono-${c}-div">
-							<table>
-							% for k, v in chrono_stats[date].items():
-								<% 
-								if "percent" in k.lower():
-									v = "%s%%" % v
-								elif "__" in v:
-									tmp = v.rsplit('__', 1)
-									v = "%s (%s)" % (tmp[0], tmp[1].upper())
-								%>
-								<tr>
-									<td>${k}</td>
-									<td>${v}</td>
-								</tr>
-							% endfor
-							</table>
-						</div>
-					</li>
-				% endfor
-				</ul>
-			</div>
 """
