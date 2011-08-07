@@ -1,6 +1,7 @@
 * text=auto !eol
 /ChangeLog -text
 /LICENCE -text
+/Makefile -text
 /README -text
 apertium/__init__.py -text
 apertium/quality/__init__.py -text
