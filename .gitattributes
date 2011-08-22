@@ -21,5 +21,6 @@ apertium/quality/html.py -text
 apertium/quality/test/__init__.py -text
 apertium/quality/testing.py -text
 /autogen.sh -text
+dev/diag.py -text
 /distribute_setup.py -text
 /setup.py -text
