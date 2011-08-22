@@ -12,9 +12,17 @@ That's it!
 
 === Prefixed (Rootless) Installation === 
 For a rootless, prefixed installation:
-$ ./autogen.sh --prefix blah
+$ ./autogen.sh PREFIX=/path/to/prefix prefixed
 
-If you need to specify which Python version, use the --python flag like:
-$ ./autogen.sh --prefix blah --python python3.1
+=== Standalone scripts ===
+If you wish to generate scripts for use elsewhere without using the libraries, then:
+$ ./autogen.sh standalone
 
+This will create a dist/ directory containing the scripts.
+
+### THIS IS NOT CURRENTLY IMPLEMENTED ###
+
+== Extra Options ==
+PREFIX: sets the prefix to be installed to
+PYTHON: the Python binary to use for installation
 

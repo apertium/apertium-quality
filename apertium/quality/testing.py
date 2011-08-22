@@ -1,4 +1,4 @@
-from os.path import dirname
+from os.path import dirname, basename, abspath
 from collections import defaultdict, Counter, OrderedDict
 from multiprocessing import Process, Manager
 from subprocess import Popen, PIPE
@@ -15,6 +15,8 @@ import re
 import urllib.request
 import shlex
 import itertools
+import traceback
+import time
 
 import yaml
 try:
@@ -25,12 +27,13 @@ except:
 	from xml.etree.ElementTree import Element, SubElement
 
 from apertium import whereis, destxt, retxt, DixFile
+from apertium.quality import Statistics, schemas
+from apertium.quality.html import Webpage
 
 pjoin = os.path.join
 ARROW = "\u2192"
 
 
-# TODO: add self.results dict() to all objects
 class UncleanWorkingDirectoryException(Exception):
 	pass
 
@@ -38,8 +41,11 @@ class Test(object):
 	"""Abstract class for Test objects
 	
 	It is recommended that print not be used within a Test class.
-	Use a StringIO instance and .getvalue() in get_output().
+	Use a StringIO instance and .getvalue() in to_string().
 	"""
+	
+	"""Attributes"""
+	timer = None
 	
 	def __str__(self):
 		"""Will return to_string method's content if exists, 
@@ -58,12 +64,13 @@ class Test(object):
 	
 	def _svn_revision(self, directory):
 		"""Returns the SVN revision of the given dictionary directory"""
+		whereis(['svnversion'])
 		res = Popen('svnversion', stdout=PIPE, close_fds=True).communicate()[0].decode('utf-8').strip()
 		try:
-			int(res) 
-			return res
+			int(res) # will raise error if it can't be int'd
+			return str(res)
 		except:
-			UncleanWorkingDirectoryException("Unclean working directory. Result: %s" % res)
+			raise UncleanWorkingDirectoryException("Unclean working directory. Result: %s" % res)
 	
 	def run(self, *args, **kwargs):
 		"""Runs the actual test
@@ -119,17 +126,19 @@ class AmbiguityTest(Test):
 		self.average = float(self.total) / float(self.surface_forms)
 
 	def run(self):
+		timing_begin = time.time()
 		self.get_results()
 		self.get_ambiguity()
+		self.timer = time.time() - timing_begin
 		return 0
 	
 	def to_xml(self):
 		q = Element('dictionary')
 		q.attrib["value"] = self.f
 
-		r = SubElement(q, "revision", value=self._svn_revision(dirname(self.f)),
-					timestamp=datetime.utcnow().isoformat(),
-					checksum=self._checksum(open(self.f, 'rb').read()))
+		r = SubElement(q, "revision", value=str(self._svn_revision(dirname(self.f))))
+		r.attrib['timestamp'] = datetime.utcnow().isoformat()
+		r.attrib['checksum'] = self._checksum(open(self.f, 'rb').read())
 
 		SubElement(r, 'surface-forms').text = str(self.surface_forms)
 		SubElement(r, 'analyses').text = str(self.total)
@@ -144,32 +153,281 @@ class AmbiguityTest(Test):
 		return out.getvalue().strip()
 
 
+class AutoTest(Test):
+	ns = "{%s}" % schemas['config']
+	
+	def __init__(self, stats=None, webdir=None, aqx=None, verbose=None, **kwargs):
+		self.stats = kwargs.get('stats', stats)
+		self.webdir = kwargs.get('webdir', webdir)
+		self.aqx = kwargs.get('aqx', aqx)
+		self.verbose = kwargs.get('verbose', verbose)
+		
+		if self.aqx is None:
+			raise ValueError('A configuration file is required')
+		
+		self.langpair = abspath('.').split('apertium-')[-1]
+		self.lang1, self.lang2 = self.langpair.split('-')
+		
+		if self.stats:
+			self.stats = Statistics(self.stats)
+		
+		if self.aqx:
+			self.root = etree.parse(self.aqx).getroot()
+	
+	def ambiguity(self):
+		dixen = glob("apertium-%s.*.dix" % self.langpair)
+		if dixen == []:
+			print("[!] No .dix files")
+			return
+		
+		print("[-] Ambiguity Tests")
+		for d in dixen:
+			print("[-] File: %s" % d)
+			try:
+				test = AmbiguityTest(d)
+				test.run()
+			except:
+				print("[!] Error:")
+				traceback.print_exc()
+				continue
+			
+			if self.stats:
+				self.stats.add(*test.to_xml())
+	
+	def coverage(self):
+		corpora = self.root.find(self.ns + "coverage")
+		if corpora is None:
+			print("[!] No coverage tests")
+			return 
+		
+		print("[-] Coverage Tests")
+		for corpus in corpora.getiterator(self.ns + "corpus"):
+			path = corpus.attrib.get("path", "")
+			lang = corpus.attrib.get("language", "")
+			gen = corpus.attrib.get("generator", "")
+			
+			if "" in (path, lang):
+				print("[!] No path or language set.")
+				continue
+			
+			print("[-] File: %s" % basename(path))
+			
+			if not os.path.isfile(path):
+				if gen != "":
+					p = Popen(gen, shell=True, stdout=PIPE, stderr=PIPE, close_fds=True)
+					res, err = p.communicate()
+					if p.returncode != 0:
+						print("[!] Return code was %s." % p.returncode)
+						continue
+					elif os.path.isfile(path):
+						print("[!] File at %s does not exist after generation." % path)
+						continue
+				else:
+					print("[!] No generator and file does not exist at %s." % path)
+					continue
+			
+			try:
+				test = CoverageTest(path, "%s.automorf.bin" % lang)
+				test.run()
+			except:
+				print("[!] Error:")
+				traceback.print_exc()
+				continue
+			
+			if self.stats:
+				self.stats.add(*test.to_xml())
+	
+	def dictionary(self):
+		print("[-] Dictionary Tests")
+		try:
+			test = DictionaryTest(self.langpair, '.')
+			test.run()
+		except:
+			print("[!] Error:")
+			traceback.print_exc()
+		
+		if self.stats:
+			self.stats.add(*test.to_xml())
+	
+	def generation(self):
+		corpora = self.root.find(self.ns + "generation")
+		if corpora is None:
+			print("[!] No generation corpora.")
+			return
+		
+		print("[-] Generation Tests")
+		for corpus in corpora.getiterator(self.ns + "corpus"):
+			path = corpus.attrib.get("path", "")
+			lang = corpus.attrib.get("language", "")
+			gen = corpus.attrib.get("generator", "")
+			
+			if "" in (path, lang):
+				print("[!] No path or language set.")
+				continue
+			
+			print("[-] File: %s" % basename(path))
+			
+			if not os.path.isfile(path):
+				if gen != "":
+					p = Popen(gen, shell=True, stdout=PIPE, stderr=PIPE, close_fds=True)
+					res, err = p.communicate()
+					if p.returncode != 0:
+						print("[!] Return code was %s." % p.returncode)
+						continue
+					elif os.path.isfile(path):
+						print("[!] File at %s does not exist after generation." % path)
+						continue
+				else:
+					print("[!] No generator and file does not exist at %s." % path)
+					continue
+			
+			try:
+				test = GenerationTest('.', lang, path)
+				test.run()
+			except:
+				print("[!] Error:")
+				traceback.print_exc()
+				continue
+			
+			if self.stats:
+				self.stats.add(*test.to_xml())
+	
+	def morph(self):
+		tests = self.root.find(self.ns + "morph")
+		if tests is None:
+			print("[!] No morph tests")
+			return 
+		
+		print("[-] Morph Tests")
+		for test in tests.getiterator(self.ns + 'test'):
+			path = test.attrib.get("path")
+			if path is None:
+				print("[!] No path value set." % path)
+				continue
+			
+			print("[-] File: %s" % path)
+			if not os.path.isfile(path):
+				print("[!] File at %s does not exist." % path)
+				continue
+				
+			try:
+				test = MorphTest(path)
+				test.run()
+			except:
+				print("[!] Error:")
+				traceback.print_exc()
+				continue
+			
+			if self.stats:
+				self.stats.add(*test.to_xml())
+
+	def regression(self):
+		tests = self.root.find(self.ns + "regression")
+		if tests is None:
+			print("[!] No regression tests")
+			return
+		
+		print("[-] Regression Tests")
+		for test in tests.getiterator(self.ns + 'test'):
+			path = test.attrib.get("path")
+			language = test.attrib.get("language")
+			
+			if None in (path, language):
+				print("[!] No path or language set.")
+				continue
+			
+			if path.startswith("http"):
+				print("[-] URL: %s" % path)
+				
+			else:
+				print("[-] File: %s" % path)
+				if not os.path.isfile(path):
+					print("[!] No file exists at %s" % path)
+					continue
+				
+			try:
+				test = RegressionTest(path, language)
+				test.run()
+			except:
+				print("[!] Error:")
+				traceback.print_exc()
+				continue
+			
+			if self.stats:
+				self.stats.add(*test.to_xml())
+
+	def webpage(self):
+		print("[-] Generating HTML content")
+		self.web = Webpage(self.stats, self.webdir, self.langpair)
+		self.web.generate()
+	
+	def run(self):
+		self.ambiguity()
+		self.coverage()
+		self.dictionary()
+		self.generation()
+		self.regression()
+		self.morph()
+		if self.stats:
+			self.stats.write()
+			if self.webdir:
+				self.webpage()
+		print("[-] Done!")
+	
+	def to_string(self): raise Exception("This class does not support this method.")
+	def to_xml(self): raise Exception("This class does not support this method.")
+
+
 class CoverageTest(Test):
 	app = "lt-proc"
+	app_args = []
 	
-	def __init__(self, f=None, dct=None, **kwargs):
-		f = kwargs.get('f', f)
+	def __init__(self, fn=None, dct=None, hfst=None, **kwargs):
+		fn = kwargs.get('fn', fn)
 		dct = kwargs.get('dct', dct)
-		if None in (f, dct):
-			raise TypeError("f or dct parameter missing.")
+		hfst = kwargs.get('hfst', hfst)
+		if None in (fn, dct):
+			raise TypeError("fn or dct parameter missing.")
 		
-		open(dct) # test existence
+		if hfst:
+			self.app = "hfst-proc"
+			self.app_args = ['-w']
+			
+		try:
+			open(dct) # test existence
+		except:
+			raise
 		whereis([self.app])
 		
-		self.fn = f
-		self.f = open(f, 'r')
+		self.fn = fn
+		try:
+			# Try parsing as XML
+			root = etree.parse(self.fn)
+			ns = "{%s}" % schemas['corpus']
+			out = StringIO()
+			for i in root.getiterator(ns + "entry"):
+				out.write(i.text + "\n")
+			self.corpus = out.getvalue()
+			del out
+		except:
+			# Turns out it's not XML
+			self.corpus = open(fn, 'r')
+		
 		self.dct = dct
 		self.result = None
 		
 	def run(self):
 		if not self.result:
-			delim = re.compile(r"\$[^^]*\^")			
-			f = self.f.read()
-			self.f.seek(0)
+			delim = re.compile(r"\$[^^]*\^")
+			f = open(self.fn, 'r')			
+			data = f.read()
+			f.close()
 
-			output = destxt(f).encode('utf-8')
-			proc = Popen([self.app, self.dct], stdin=PIPE, stdout=PIPE, close_fds=True)
+			output = destxt(data).encode('utf-8')
+			timing_begin = time.time()
+			proc = Popen([self.app] + self.app_args + [self.dct], stdin=PIPE, stdout=PIPE, close_fds=True)
 			output = str(proc.communicate(output)[0].decode('utf-8'))
+			self.timer = time.time() - timing_begin
 			output = retxt(output) 
 			
 			output = delim.sub("$\n^", output)
@@ -208,15 +466,15 @@ class CoverageTest(Test):
 	
 	def to_xml(self):
 		q = Element('dictionary')
-		q.attrib["value"] = os.path.basename(self.dct)
+		q.attrib["value"] = basename(dirname(self.dct))
 		
 		r = SubElement(q, "revision", 
-					value=self._svn_revision(dirname(self.dct)),
+					value=str(self._svn_revision(dirname(self.dct))),
 					timestamp=datetime.utcnow().isoformat(),
 					checksum=self._checksum(open(self.dct, 'rb').read()))
 		
 		s = SubElement(r, 'corpus')
-		s.attrib["value"] = os.path.basename(self.fn)
+		s.attrib["value"] = basename(self.fn)
 		s.attrib["checksum"] = self._checksum(open(self.fn, 'rb').read())
 		
 		SubElement(r, 'percent').text = "%.2f" % self.get_coverage()
@@ -229,6 +487,9 @@ class CoverageTest(Test):
 		for word, count in self.get_top_unknown_words():
 			SubElement(s, 'word', count=str(count)).text = wrx.search(word).group(1)
 		
+		s = SubElement(r, 'system')
+		SubElement(s, 'speed').text = "%.4f" % self.timer
+		
 		return ("coverage", etree.tostring(q))
 
 	def to_string(self):
@@ -237,6 +498,7 @@ class CoverageTest(Test):
 		out.write("Coverage: %.2f%%\n" % self.get_coverage())
 		out.write("Top unknown words in the corpus:\n")
 		out.write(self.get_top_unknown_words_string())
+		out.write("Translation speed: %s\n" % self.timer)
 		return out.getvalue().strip()
 
 			
@@ -249,36 +511,85 @@ class DictionaryTest(Test):
 			if tag == "rule":
 				self.rules.append(attrs.get("comment", None))
 	
-	def __init__(self, langpair=None, directory=None, **kwargs):
+	def __init__(self, langpair=None, directory=None, corpus=None, **kwargs):
+		whereis(['apertium-transfer', 'apertium-pretransfer', 'lt-proc'])
+		
 		self.langpair = kwargs.get("langpair") or langpair
 		self.directory = kwargs.get("directory") or directory or '.'
+		self.corpus = kwargs.get("corpus") or corpus
 		if None in (self.directory, self.langpair):
 			raise ValueError("langpair or directory missing.")
 		
 		self.dixfiles = glob(pjoin(self.directory, '*.dix'))
 		self.rlxfiles = glob(pjoin(self.directory, '*.rlx')) 
 		self.tnxfiles = glob(pjoin(self.directory, '*.t[1-9]x'))
-		print(self.dixfiles)
+		
+		self.trules = None
 		self.rules = None
 		self.entries = None
+	
+	def get_transfer_command(self, tnxcount, pair1, pair2):
+		cmd = ["lt-proc {0}/{1}.automorf.bin | apertium-pretransfer".format(self.directory, self.langpair)]
+		for i in range(1, tnxcount+1):
+			if i == 1:
+				cmd.append("""apertium-transfer {0}/apertium-{1}.{2}.t1x \
+							{0}/{2}.t1x.bin \
+							{0}/{2}.autobil.bin""".format(self.directory, pair1, pair2))
+			elif i < tnxcount:
+				cmd.append("""apertium-interchunk {0}/apertium-{1}.{2}.t{3}x \
+							{0}/{2}.t{3}x.bin""".format(self.directory, pair1, pair2, i))
+			elif i == tnxcount:
+				cmd.append("""apertium-postchunk {0}/apertium-{1}.{2}.t{3}x \
+							{0}/{2}.t{3}x.bin""".format(self.directory, pair1, pair2, i))
+		return " | ".join(cmd)
+	
+	def get_transfer_rules(self):
+		if not self.trules:
+			tnxcount = len(glob(pjoin(self.directory, '*.{0}.t[1-9]x'.format(self.langpair))))
+			if tnxcount == 0:
+				raise ValueError("No tnx files found. Try compiling your dictionary or something.")
+			self.trules = defaultdict(list)
+			
+			for i in range(tnxcount):
+				cmd = self.get_transfer_command(i, self.langpair, self.langpair) # STUB must do btoh language pairs
+				p = Popen(cmd, shell=True, close_fds=True, stdout=PIPE)
+				res = p.communicate(destxt(open(self.corpus, 'r').read()))[0].decode('utf-8').split('\n')
+				fn = "apertium-{0}.{1}.t{2}x".format(self.langpair, self.langpair, tnxcount+1)
+				self.trules[fn] = [i for i in res if i in ": Rule"]
+		return self.trules
+	
+	def get_transfer_rule_counter(self):
+		c = Counter()
+		for k, v in self.get_transfer_rules().items():
+			c[k] = len(v)
+		return c
+	
+	def get_transfer_rule_count(self):
+		return sum(self.get_transfer_rule_counter().values())
+
+	def get_unique_transfer_rule_count(self):
+		c = Counter()
+		for k, v in self.get_transfer_rules().items():
+			c[k] = len(set(v))
+		return sum(c.values())
 	
 	def get_rules(self):
 		if not self.rules:
 			self.rules = defaultdict(list)
 			
-			for i in self.rlxfiles:
+			for i in self.tnxfiles:
 				parser = make_parser()
 				handler = self.TnXHandler()
 				parser.setContentHandler(handler)
 				parser.parse(i)
-				self.rules[i] = handler.rules
+				self.rules[basename(i)] = handler.rules
 			
 			ruletypes = ("SELECT", "REMOVE", "MAP", "SUBSTITUTE")
-			for i in self.tnxfiles:
+			for i in self.rlxfiles:
 				f = open(i, 'r')
 				for line in f:
-					if line.startswith(ruletypes):
-						self.rules[i].append(line)
+					if line.strip().startswith(ruletypes):
+						self.rules[basename(i)].append(line)
 						
 		return self.rules
 	
@@ -296,7 +607,7 @@ class DictionaryTest(Test):
 			self.entries = defaultdict(list)
 			
 			for i in self.dixfiles:
-				self.rules[i].append(DixFile(i).get_entries())
+				self.entries[basename(i)] += DixFile(i).get_entries()
 		return self.entries
 	
 	def get_entry_counter(self):
@@ -309,39 +620,52 @@ class DictionaryTest(Test):
 		return sum(self.get_entry_counter().values())
 	
 	def get_unique_entry_count(self):
-		return sum(set(self.get_entry_counter().values()))
+		c = Counter()
+		for k, v in self.get_entries().items():
+			c[k] = len(set(v))
+		return sum(c.values())
 	
 	def run(self):
-		self.get_entries()
 		self.get_rules()
+		self.get_entries()
+		if self.corpus:
+			self.get_transfer_rules()
 	
 	def to_xml(self):
-		return NotImplemented
 		q = Element('dictionary')
+		q.attrib["value"] = basename(abspath(self.directory))
 		
 		r = SubElement(q, 'revision')
-		r.attrib["value"] = os.path.basename(self.dct.f)
-		r.attrib["checksum"] = self._checksum(open(self.dct.f, 'rb').read())
+		r.attrib["value"] = str(self._svn_revision(self.directory))
 		r.attrib["timestamp"] = datetime.utcnow().isoformat()
 		
-		SubElement(r, 'entries').text = str(len(self.dct.gen_entries()))
-		SubElement(r, 'unique-entries').text = str(len(self.dct.get_unique_entries()))
-		SubElement(r, 'rules').text = str(self.dct.get_rule_count())
+		SubElement(r, 'entries').text = str(self.get_entry_count())
+		SubElement(r, 'unique-entries').text = str(self.get_unique_entry_count())
+		SubElement(r, 'rules').text = str(self.get_rule_count())
 		
 		return ("general", etree.tostring(q))
 	
 	def to_string(self):
 		out = StringIO()
-		out.write("Ordered rule numbers per file:\n")
+		
+		out.write("Ordered rule count per file:\n")
 		for file, count in self.get_rule_counter().most_common():
 			out.write("%d\t %s\n" % (count, file))
-		out.write("Total rules: %d\n" % self.get_rule_count())
+		out.write("Total rules: %d\n\n" % self.get_rule_count())
 		
-		out.write("Ordered entry numbers per file:\n")
+		out.write("Ordered entry count per file:\n")
 		for file, count in self.get_entry_counter().most_common():
 			out.write("%d\t %s\n" % (count, file))
 		out.write("Total entries: %d\n" % self.get_entry_count())
 		out.write("Total unique entries: %d\n" % self.get_unique_entry_count())
+		
+		if self.trules:
+			out.write("Ordered transfer rules count per file:\n")
+			for file, count in self.get_transfer_rule_counter().most_common():
+				out.write("%d\t %s\n" % (count, file))
+			out.write("Total transfer rules: %d\n" % self.get_transfer_rule_count())
+			out.write("Total unique transfer rules: %d\n" % self.get_unique_transfer_rule_count())
+		
 		return out.getvalue().strip()
 
 
@@ -365,7 +689,7 @@ class GenerationTest(Test):
 		for i in data:
 			if i == "^":
 				in_word = True
-			elif i == "$":
+			if i == "$":
 				out.write("%s$\n" % buf.getvalue())
 				count[buf.getvalue()] += 1
 				buf = StringIO()
@@ -376,22 +700,24 @@ class GenerationTest(Test):
 		return out.getvalue().split('\n')
 					
 	def run(self):
-		app = Popen(['apertium', '-d', self.directory, '%s' % self.mode], stdin=open(self.corpus), stdout=PIPE, close_fds=True)
-		res = app.communicate()[0].decode('utf-8')
-		transfer = self.get_transfer(res)
+		timing_begin = time.time()
+		app = Popen(['apertium', '-d', self.directory, self.mode], stdin=open(self.corpus), stdout=PIPE, close_fds=True)
+		raw = app.communicate()[0].decode('utf-8')
+		transfer = self.get_transfer(raw)
+		del raw
 		
 		stripped = StringIO()
 		for word, count in Counter(transfer).most_common():
-			stripped.write("%d\t%s\n" % (count, word))
+			stripped.write("{:>6} {:<}\n".format(count, word))
 		stripped = stripped.getvalue()
 		
 		app = Popen(['lt-proc', '-d', "%s.autogen.bin" % pjoin(self.directory, self.lang)], stdin=PIPE, stdout=PIPE, close_fds=True)
 		surface = app.communicate(stripped.encode('utf-8'))[0].decode('utf-8')
-		nofreq = re.sub(r'^ *[0-9]* \^', '^', stripped)
+		nofreq = re.sub(r'[\s\t]*\d*\s*\^', '^', stripped)
 		
 		gen_errors = StringIO()
 		for i in itertools.zip_longest(surface.split('\n'), nofreq.split('\n'), fillvalue=""):
-			gen_errors.write("{:<16}{:<16}".format(*list(str(x) for x in i)))
+			gen_errors.write("{:<16}{:<16}\n".format(*list(str(x) for x in i)))
 		gen_errors = gen_errors.getvalue().split('\n')
 
 		multiform = []
@@ -406,23 +732,34 @@ class GenerationTest(Test):
 					tagmismatch.append(i)
 			elif "/" in i:
 				multiform.append(i)
-		
-		print("DEBUG:")
-		print("raw:\n%s\n" % res)
-		print("transfer:\n%s\n" % transfer)
-		print("stripped:\n%s\n" % stripped)
-		print("surface:\n%s\n" % surface)
-		print("nofreq:\n%s\n" % nofreq)
-		print('\nmultiform: %s' % multiform)
-		print('multibidix: %s' % multibidix)
-		print("tagmismatch %s" % tagmismatch)
-		
+
 		self.multiform = multiform
 		self.multibidix = multibidix
 		self.tagmismatch = tagmismatch
+		self.timer = time.time() - timing_begin
 
-	#def to_xml(self):
-	#	pass
+	def to_xml(self):
+		q = Element('dictionary')
+		q.attrib["value"] = basename(abspath(self.directory))
+		
+		r = SubElement(q, "revision", 
+					value=str(self._svn_revision(basename(abspath(self.directory)))),
+					timestamp=datetime.utcnow().isoformat())
+		
+		s = SubElement(r, 'corpus')
+		s.attrib["value"] = basename(self.corpus)
+		s.attrib["checksum"] = self._checksum(open(self.corpus, 'rb').read())
+		
+		SubElement(r, "total").text = str(len(self.multiform) + len(self.multibidix) + len(self.tagmismatch))
+		SubElement(r, "multiform").text = str(len(self.multiform))
+		SubElement(r, "multibidix").text = str(len(self.multibidix))
+		SubElement(r, "tagmismatch").text = str(len(self.tagmismatch))
+		
+		s = SubElement(r, "system")
+		SubElement(s, "speed").text = "%.4f" % self.timer
+		
+		return ("generation", etree.tostring(q))
+		
 	
 	def to_string(self):
 		out = StringIO()
@@ -450,7 +787,9 @@ class GenerationTest(Test):
 		out.write("%6d %s\n" % (len(self.multiform), "multiform"))
 		out.write("%6d %s\n" % (len(self.multibidix), "multibidix"))
 		out.write("%6d %s\n" % (len(self.tagmismatch), "tagmismatch"))
-		out.write("Total: %d\n" % (len(self.multiform) + len(self.multibidix) + len(self.tagmismatch)))
+		out.write("Total: %d\n\n" % (len(self.multiform) + len(self.multibidix) + len(self.tagmismatch)))
+		
+		out.write("Time: %.4f\n" % self.timer) 
 		
 		return out.getvalue()
 
@@ -511,7 +850,9 @@ class MorphTest(Test):
 		self.load_config()
 
 	def run(self):
+		timing_begin = time.time()
 		self.run_tests(self.args['test'])
+		self.timer = time.time() - timing_begin
 		return 0
 
 	def load_config(self):
@@ -696,7 +1037,7 @@ class MorphTest(Test):
 		q = Element('config')
 		q.attrib["value"] = self.f
 		
-		r = SubElement(q, "revision", value=self._svn_revision(dirname(self.f)),
+		r = SubElement(q, "revision", value=str(self._svn_revision(dirname(self.f))),
 					timestamp=datetime.utcnow().isoformat(),
 					checksum=self._checksum(open(self.f, 'rb').read()))
 		
@@ -718,7 +1059,10 @@ class MorphTest(Test):
 			t.text = str(k)
 			t.attrib['fails'] = str(v["Fail"])
 			t.attrib['passes'] = str(v["Pass"])
-
+		
+		s = SubElement(r, "system")
+		SubElement(s, "speed").text = "%.4f" % self.timer
+		
 		return ("morph", etree.tostring(r))
 
 	def to_string(self):
@@ -726,7 +1070,7 @@ class MorphTest(Test):
 
 
 class RegressionTest(Test):
-	wrg = re.compile(r"{{test\|([^|]*)\|([^|]*)\|([^|]*)[\|}]")
+	wrg = re.compile(r"{{test\|(.*)}}")
 	ns = "{http://www.mediawiki.org/xml/export-0.3/}"
 	program = "apertium"
 	
@@ -738,8 +1082,6 @@ class RegressionTest(Test):
 			raise ValueError("Url or mode parameter missing.")
 
 		whereis([self.program])
-		#if not "Special:Export" in url:
-		#	print("Warning: URL did not contain Special:Export.")
 		self.mode = mode
 		
 		self.directory = directory
@@ -755,7 +1097,7 @@ class RegressionTest(Test):
 			if e.tag == self.ns + "title":
 				self.title = e.text
 			if e.tag == self.ns + "revision":
-				self.revision = e[0].text # should be <id>
+				self.revision = e[0].text
 			if e.tag == self.ns + "text":
 				text = e.text
 		if not text:
@@ -765,42 +1107,57 @@ class RegressionTest(Test):
 		rtests = text.split('\n')
 		rtests = [self.wrg.search(j) for j in rtests if self.wrg.search(j)]
 		for i in rtests:
-			lang, left, right = i.group(1), i.group(2), i.group(3)
-			if not left.endswith('.'):
-				left += '[_].'
-			self.tests[lang.strip()][left.strip()] = right.strip()
+			test = i.group(1).split('|')
+			if len(test) < 3:
+				continue
+			comment = None
+			if len(test) >= 3:
+				lang, left, right = test[0:3]
+				if not left.endswith('.'):
+					left += '[_].'
+			if len(test) >= 4:
+				comment = test[3].strip()
+			self.tests[lang.strip()][left.strip()] = [right.strip(), comment]
 		self.out = StringIO()
 	
 	def run(self):
+		timing_begin = time.time()
 		for side in self.tests:
 			self.out.write("Now testing: %s\n" % side)
+			
 			args = '\n'.join(self.tests[side].keys())
 			app = Popen([self.program, '-d', self.directory, self.mode], stdin=PIPE, stdout=PIPE, stderr=PIPE, close_fds=True)
 			app.stdin.write(args.encode('utf-8'))
 			res = app.communicate()[0]
+			
 			self.results = str(res.decode('utf-8')).split('\n')
 			if app.returncode > 0:
 				return app.returncode
 
 			for n, test in enumerate(self.tests[side].items()):
 				if n >= len(self.results):
-					#raise AttributeError("More tests than results.")
 					self.out.write("WARNING: more tests than results!\n")
 					continue
+				
 				res = self.results[n].split("[_]")[0].strip()
 				orig = test[0].split("[_]")[0].strip()
-				targ = test[1].strip()
+				targ = test[1][0].strip()
+				
 				self.out.write("%s\t  %s\n" % (self.mode, orig))
 				if res == targ:
 					self.out.write("WORKS\t  %s\n" % res)
+					if not test[1][1] is None:
+						self.out.write("//\t  %s\n" % test[1][1].strip())
 					self.passes += 1
 				else:
 					self.out.write("\t- %s\n" % targ)
 					self.out.write("\t+ %s\n" % res)
+				
 				self.total += 1
 				self.out.write('\n')
 			self.out.write("Passes: %d/%d, Success rate: %.2f%%\n" 
 					% (self.passes, self.total, self.get_total_percent()))
+		self.timer = time.time() - timing_begin
 		return 0
 
 	def get_passes(self):
@@ -826,13 +1183,16 @@ class RegressionTest(Test):
 		q.attrib['revision'] = page.find(ns + 'revision').find(ns + 'id').text
 		
 		r = SubElement(q, 'revision', 
-					value=self._svn_revision(self.directory),
+					value=str(self._svn_revision(self.directory)),
 					timestamp=datetime.utcnow().isoformat())
 		
 		SubElement(r, 'percent').text = "%.2f" % self.get_total_percent()
 		SubElement(r, 'total').text = str(self.get_total())
 		SubElement(r, 'passes').text = str(self.get_passes())
 		SubElement(r, 'fails').text = str(self.get_fails())
+		
+		s = SubElement(r, "system")
+		SubElement(s, "speed").text = "%.4f" % self.timer
 		
 		return ("regression", etree.tostring(q))
 
@@ -841,17 +1201,34 @@ class RegressionTest(Test):
 
 
 class VocabularyTest(Test):
-	def __init__(self, lang1, lang2, output, fdir="."):
+	def __init__(self, direction, lang1, lang2, output, 
+				fdir=".", ana=None, gen=None):
 		whereis(['apertium-transfer', 'apertium-pretransfer', 'lt-expand'])
+		dictlang = langpair = "%s-%s" % (lang1, lang2)
+		if direction.lower() == "rl":
+			langpair = "%s-%s" % (lang2, lang1)
 		
-		self.transfer_cmd = """apertium-pretransfer |\
-			 apertium-transfer \
-			 {0}/apertium-{1}-{2}.{1}-{2}.t1x \
-			 {0}/{1}-{2}.t1x.bin \
-			 {0}/{1}-{2}.autobil.bin""".format(fdir, lang1, lang2)
+		tnxcount = len(glob(pjoin(fdir, '*.{0}-{1}.t[1-9]x'.format(lang1, lang2))))
+		if tnxcount == 0:
+			raise ValueError("No tnx files found. Try compiling your dictionary or something.")
+		
+		cmd = ["apertium-pretransfer"]
+		for i in range(1, tnxcount+1):
+			if i == 1:
+				cmd.append("""apertium-transfer {0}/apertium-{1}.{2}.t1x \
+							{0}/{2}.t1x.bin \
+							{0}/{2}.autobil.bin""".format(fdir, dictlang, langpair))
+			elif i < tnxcount:
+				cmd.append("""apertium-interchunk {0}/apertium-{1}.{2}.t{3}x \
+							{0}/{2}.t{3}x.bin""".format(fdir, dictlang, langpair, i))
+			elif i == tnxcount:
+				cmd.append("""apertium-postchunk {0}/apertium-{1}.{2}.t{3}x \
+							{0}/{2}.t{3}x.bin""".format(fdir, dictlang, langpair, i))
+		self.transfer_cmd = " | ".join(cmd)
 		
 		self.lang1 = lang1
 		self.lang2 = lang2
+		self.output = output
 		self.out = open(output, 'w')
 		
 		self.tmp = []
@@ -860,8 +1237,8 @@ class VocabularyTest(Test):
 			self.tmp[i].close()
 		
 		self.fdir = fdir
-		self.anadix = pjoin(fdir, "apertium-{0}-{1}.{0}.dix".format(lang1, lang2))
-		self.genbin = pjoin(fdir, "{0}-{1}.autogen.bin".format(lang1, lang2))
+		self.anadix = ana or pjoin(fdir, "apertium-{0}.{1}.dix".format(dictlang, langpair.split('-')[0]))
+		self.genbin = gen or pjoin(fdir, "{0}.autogen.bin".format(langpair))
 		
 		self.alphabet = DixFile(self.anadix).get_alphabet()
 		
@@ -879,9 +1256,11 @@ class VocabularyTest(Test):
 
 		for i in range(3):
 			self.tmp[i] = open(self.tmp[i].name, 'r')
-
+		
+		timing_begin = time.time()
 		p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE, close_fds=True)
 		res, err = p.communicate()
+		self.timer = time.time() - timing_begin
 		
 		arrow_output = "{:<24} {A} {:<24} {A} {:<24}\n"
 		regex = re.compile(r"(\^.<sent>\$|\\| \.$)")
@@ -897,13 +1276,11 @@ class VocabularyTest(Test):
 			os.unlink(i.name)
 		
 		self.out.close()
-	
-	def to_xml(self):
-		return NotImplemented
 
 	def to_string(self):
 		# TODO: add stats output here
-		return "Done."
+		x = "Speed: %.4f" % self.timer
+		return "%s\nData output to %s." % (x, self.output)
 
 
 # SUPPORT FUNCTIONS

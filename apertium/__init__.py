@@ -5,6 +5,7 @@ from xml.sax import make_parser
 from xml.sax.handler import ContentHandler
 from hashlib import sha1
 from datetime import datetime
+import traceback
 import os
 import os.path
 import re
@@ -59,10 +60,18 @@ class DixFile(object):
 	class DIXHandler(ContentHandler):
 		def __init__(self):
 			self.lemmas = []
+			self.in_section = False
 
 		def startElement(self, tag, attrs):
-			if tag == "e":
+			if tag == "section":
+				self.in_section = True
+			
+			if tag == "e" and self.in_section:
 				self.lemmas.append(attrs.get("lm", None))
+		
+		def endElement(self, tag):
+			if tag == "section":
+				self.in_section = False
 
 	def __init__(self, f):
 		self.f = f
@@ -84,8 +93,12 @@ class DixFile(object):
 			parser = make_parser()
 			handler = self.DIXHandler()
 			parser.setContentHandler(handler)
-			parser.parse(self.dix)
-			self.lemmas = handler.lemmas
+			try:
+				parser.parse(self.f)
+				self.lemmas = handler.lemmas
+			except Exception as e:
+				print("File %s caused an exception:" % self.f)
+				print(traceback.format_exception_only(type(e), e)[0])
 		return self.lemmas
 	
 	def get_unique_entries(self):	
