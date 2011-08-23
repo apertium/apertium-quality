@@ -1,7 +1,10 @@
 * text=auto !eol
+/AUTHORS -text
+/COPYING -text
 /ChangeLog -text
-/LICENCE -text
 /Makefile -text
+/Makefile.am -text
+/NEWS -text
 /README -text
 apertium/__init__.py -text
 apertium/quality/__init__.py -text
@@ -21,6 +24,7 @@ apertium/quality/html.py -text
 apertium/quality/test/__init__.py -text
 apertium/quality/testing.py -text
 /autogen.sh -text
+/configure.ac -text
 dev/diag.py -text
 /distribute_setup.py -text
 /setup.py -text
