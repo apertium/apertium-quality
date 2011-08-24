@@ -174,6 +174,24 @@ class AutoTest(Test):
 		if self.aqx:
 			self.root = etree.parse(self.aqx).getroot()
 	
+	def build(self):
+		commands = self.root.find(self.ns + "commands")
+		if commands is None:
+			return
+		
+		for command in commands.getiterator(self.ns + "commands"):
+			p = Popen(command.text, shell=True, stdout=PIPE, stderr=PIPE, close_fds=True)
+			out, err = p.communicate()
+			out = out.decode('utf-8')
+			err = err.decode('utf-8')
+			
+			if p.returncode != 0:
+				print("[!] Error:")
+				print(err)
+				return False
+			
+		return True
+		
 	def ambiguity(self):
 		dixen = glob("apertium-%s.*.dix" % self.langpair)
 		if dixen == []:
@@ -356,18 +374,34 @@ class AutoTest(Test):
 			if self.stats:
 				self.stats.add(*test.to_xml())
 
+	def vocabulary(self):
+		print("[-] Vocabulary Tests")
+		try:
+			test = VocabularyTest("lr", self.lang1, self.lang2, "voctest.txt", '.')
+			test.run()
+		except:
+			print("[!] Error:")
+			traceback.print_exc()
+		
+		if self.stats:
+			self.stats.add(*test.to_xml())
+		
 	def webpage(self):
 		print("[-] Generating HTML content")
 		self.web = Webpage(self.stats, self.webdir, self.langpair)
 		self.web.generate()
 	
 	def run(self):
+		if not self.build():
+			print("[!] Bailing out.")
+			return
 		self.ambiguity()
 		self.coverage()
 		self.dictionary()
 		self.generation()
 		self.regression()
 		self.morph()
+		self.vocabulary()
 		if self.stats:
 			self.stats.write()
 			if self.webdir:
@@ -1241,6 +1275,7 @@ class VocabularyTest(Test):
 		self.genbin = gen or pjoin(fdir, "{0}.autogen.bin".format(langpair))
 		
 		self.alphabet = DixFile(self.anadix).get_alphabet()
+		self.counter = None
 		
 	def run(self):
 		#TODO: pythonise the awk command
@@ -1276,11 +1311,41 @@ class VocabularyTest(Test):
 			os.unlink(i.name)
 		
 		self.out.close()
+		self.get_symbol_count()
+		
+	def get_symbol_count(self):
+		c = Counter()
+		f = open(self.output, 'r')
+		for line in f:
+			c['lines'] += 1
+			for char in line:
+				if char in ("#", "@"):
+					c[char] += 1
+		self.counter = c
+
+	def to_xml(self):
+		q = Element('dictionary')
+		q.attrib["value"] = basename(abspath(self.fdir))
+		
+		r = SubElement(q, "revision", 
+					value=str(self._svn_revision(basename(abspath(self.fdir)))),
+					timestamp=datetime.utcnow().isoformat())
+		
+		SubElement(r, "lines").text = str(self.counter['lines'])
+		SubElement(r, "hashes").text = str(self.counter['#'])
+		SubElement(r, "ats").text = str(self.counter['@'])
+		
+		s = SubElement(r, "system")
+		SubElement(s, "speed").text = "%.4f" % self.timer
+		
+		return ("vocabulary", etree.tostring(q))
 
 	def to_string(self):
-		# TODO: add stats output here
-		x = "Speed: %.4f" % self.timer
-		return "%s\nData output to %s." % (x, self.output)
+		x = "Lines: %s\n" % self.counter['lines']
+		x += "# count: %s\n" % self.counter['#']
+		x += "@ count: %s\n\n" % self.counter['@']
+		x += "Speed: %.4f\n" % self.timer
+		return "%sData output to %s." % (x, self.output)
 
 
 # SUPPORT FUNCTIONS
