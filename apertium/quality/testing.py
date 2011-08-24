@@ -179,7 +179,7 @@ class AutoTest(Test):
 		if commands is None:
 			return
 		
-		for command in commands.getiterator(self.ns + "commands"):
+		for command in commands.getiterator(self.ns + "command"):
 			p = Popen(command.text, shell=True, stdout=PIPE, stderr=PIPE, close_fds=True)
 			out, err = p.communicate()
 			out = out.decode('utf-8')
@@ -189,7 +189,6 @@ class AutoTest(Test):
 				print("[!] Error:")
 				print(err)
 				return False
-			
 		return True
 		
 	def ambiguity(self):
@@ -393,7 +392,7 @@ class AutoTest(Test):
 	
 	def run(self):
 		res = self.build()
-		if res is False:
+		if not res:
 			print("[!] Bailing out.")
 			return
 		self.ambiguity()
@@ -408,9 +407,6 @@ class AutoTest(Test):
 			if self.webdir:
 				self.webpage()
 		print("[-] Done!")
-	
-	def to_string(self): raise Exception("This class does not support this method.")
-	def to_xml(self): raise Exception("This class does not support this method.")
 
 
 class CoverageTest(Test):
