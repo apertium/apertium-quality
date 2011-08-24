@@ -8,7 +8,9 @@ install:
 	@if test -z "$(prefix)"; then \
 		$(PYTHON) setup.py $(_VERBOSE) install; \
 	else \
-		PYTHONPATH=$(_PKGDIR)':$$PYTHONPATH' $(PYTHON) setup.py $(_VERBOSE) install --prefix=$(prefix); \
+		export PYTHONPATH=$(_PKGDIR); \
+		mkdir -p $(_PKGDIR); \
+		$(PYTHON) setup.py $(_VERBOSE) install --prefix $(prefix); \
 		echo '' ;\
 		echo 'IMPORTANT: Remember to add $(_PKGDIR) to your $$PYTHONPATH!'; \
 	fi 
@@ -22,7 +24,9 @@ install-nltk:
 		$(PYTHON) setup-distutils.py $(_VERBOSE) install; \
 	else \
 		cd nltk-3.0.1 && \
-		PYTHONPATH=$(_PKGDIR)':$$PYTHONPATH' $(PYTHON) setup-distutils.py $(_VERBOSE) install --prefix=$(prefix); \
+		export PYTHONPATH=$(_PKGDIR); \
+		mkdir -p $(_PKGDIR); \
+		$(PYTHON) setup-distutils.py $(_VERBOSE) install --prefix $(prefix); \
 		echo '' ;\
 		echo 'IMPORTANT: Remember to add $(_PKGDIR) to your $$PYTHONPATH!'; \
 	fi 
