@@ -26,5 +26,6 @@ apertium/quality/testing.py -text
 /autogen.sh -text
 /configure.ac -text
 dev/diag.py -text
+dev/punktgen.py -text
 /distribute_setup.py -text
 /setup.py -text
