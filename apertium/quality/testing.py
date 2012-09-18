@@ -1015,11 +1015,11 @@ class MorphTest(Test):
 
 			for form in expected_results:
 				if not form in actual_results:
-					missing.add(form)
+					invalid.add(form)
 
 			for form in actual_results:
 				if not form in expected_results:
-					invalid.add(form)
+					missing.add(form)
 		
 			for form in actual_results:
 				if not form in (invalid | missing):
