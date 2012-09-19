@@ -1031,11 +1031,11 @@ class MorphTest(Test):
 			
 			if not self.args.get('hide_fail'):
 				if len(invalid) > 0:
-					self.out.failure(test, "unexpected results", invalid)
+					self.out.failure(test, "missing results", invalid)
 					self.count[d]["Fail"] += len(invalid)
 				if len(missing) > 0 and \
 						(not self.args.get('ignore_analyses') or not passed):
-					self.out.failure(test, "missing results", missing)
+					self.out.failure(test, "unexpected results", missing)
 					self.count[d]["Fail"] += len(missing)
 
 		self.out.result(title, c, self.count[d])
