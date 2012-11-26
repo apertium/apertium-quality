@@ -1008,35 +1008,43 @@ class MorphTest(Test):
 			expected_results = set(forms)
 			actual_results = set(self.results[f][test])
 
+ 			missing = set()
 			invalid = set()
-			missing = set()
-			success = set()
-			passed = False
+ 			success = set()
+ 			passed = False
 
-			for form in expected_results:
-				if not form in actual_results:
-					invalid.add(form)
-
-			for form in actual_results:
-				if not form in expected_results:
+ 			for form in expected_results:
+ 				if not form in actual_results:
 					missing.add(form)
-		
-			for form in actual_results:
-				if not form in (invalid | missing):
-					passed = True
-					success.add(form)
-					self.count[d]["Pass"] += 1
-					if not self.args.get('hide_pass'):
-						self.out.success(test, form)				
+ 
+ 			for form in actual_results:
+ 				if not form in expected_results:
+					invalid.add(form)
 			
-			if not self.args.get('hide_fail'):
-				if len(invalid) > 0:
-					self.out.failure(test, "missing results", invalid)
-					self.count[d]["Fail"] += len(invalid)
-				if len(missing) > 0 and \
+			if len(expected_results) > 0:
+				for form in actual_results:
+					if not form in (missing | invalid):
+						passed = True
+						success.add(form)
+						self.count[d]["Pass"] += 1
+						if not self.args.get('hide_pass'):
+							self.out.success(test, form)
+			else:
+				if len(invalid) == 1 and list(invalid)[0].endswith("+?"):
+					invalid = set()
+ 					passed = True
+ 					self.count[d]["Pass"] += 1
+ 					if not self.args.get('hide_pass'):
+						self.out.success(test, '<no generation>')
+ 			
+ 			if not self.args.get('hide_fail'):
+				if len(missing) > 0:
+					self.out.failure(test, "missing results", missing)
+ 					self.count[d]["Fail"] += len(missing)
+				if len(invalid) > 0 and \
 						(not self.args.get('ignore_analyses') or not passed):
-					self.out.failure(test, "unexpected results", missing)
-					self.count[d]["Fail"] += len(missing)
+					self.out.failure(test, "unexpected results", invalid)
+					self.count[d]["Fail"] += len(invalid)
 
 		self.out.result(title, c, self.count[d])
 		
