@@ -1008,17 +1008,17 @@ class MorphTest(Test):
 			expected_results = set(forms)
 			actual_results = set(self.results[f][test])
 
- 			missing = set()
+			missing = set()
 			invalid = set()
- 			success = set()
- 			passed = False
+			success = set()
+			passed = False
 
- 			for form in expected_results:
- 				if not form in actual_results:
+			for form in expected_results:
+				if not form in actual_results:
 					missing.add(form)
  
- 			for form in actual_results:
- 				if not form in expected_results:
+			for form in actual_results:
+				if not form in expected_results:
 					invalid.add(form)
 			
 			if len(expected_results) > 0:
@@ -1032,15 +1032,15 @@ class MorphTest(Test):
 			else:
 				if len(invalid) == 1 and list(invalid)[0].endswith("+?"):
 					invalid = set()
- 					passed = True
- 					self.count[d]["Pass"] += 1
- 					if not self.args.get('hide_pass'):
+					passed = True
+					self.count[d]["Pass"] += 1
+					if not self.args.get('hide_pass'):
 						self.out.success(test, '<no generation>')
- 			
- 			if not self.args.get('hide_fail'):
+			
+			if not self.args.get('hide_fail'):
 				if len(missing) > 0:
 					self.out.failure(test, "missing results", missing)
- 					self.count[d]["Fail"] += len(missing)
+					self.count[d]["Fail"] += len(missing)
 				if len(invalid) > 0 and \
 						(not self.args.get('ignore_analyses') or not passed):
 					self.out.failure(test, "unexpected results", invalid)
