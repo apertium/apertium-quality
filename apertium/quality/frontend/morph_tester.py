@@ -25,10 +25,10 @@ class UI(Frontend, MorphTest):
 			help="Lexical input/generation tests only")
 		self.add_argument("-f", "--hide-fails",
 			dest="hide_fail", action="store_true",
-			help="Suppresses passes to make finding failures easier")
+			help="Suppresses failures to make finding passes easier")
 		self.add_argument("-p", "--hide-passes",
 			dest="hide_pass", action="store_true",
-			help="Suppresses failures to make finding passes easier")
+			help="Suppresses passes to make finding failures easier")
 		self.add_argument("-S", "--section", default=["hfst"],
 			dest="section", nargs=1, required=False, 
 			help="The section to be used for testing (default is `hfst`)")
