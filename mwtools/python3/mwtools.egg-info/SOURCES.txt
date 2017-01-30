@@ -1,0 +1,6 @@
+setup.py
+mwtools/__init__.py
+mwtools.egg-info/PKG-INFO
+mwtools.egg-info/SOURCES.txt
+mwtools.egg-info/dependency_links.txt
+mwtools.egg-info/top_level.txt

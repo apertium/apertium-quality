@@ -1,0 +1,23 @@
+Metadata-Version: 1.1
+Name: mwtools
+Version: 0.7
+Summary: Parses Mediawiki syntax into readable plain-text suitable
+	for linguistic purposes.
+Home-page: https://github.com/bbqsrc/mwtools
+Author: Brendan Molloy
+Author-email: brendan@bbqsrc.net
+License: CC0
+Download-URL: https://github.com/bbqsrc/mwtools/archives/master
+Description: UNKNOWN
+Keywords: mwtools,mediawiki,wikipedia,parser
+Platform: UNKNOWN
+Classifier: Development Status :: 4 - Beta
+Classifier: Operating System :: OS Independent
+Classifier: License :: Public Domain
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.1
+Classifier: Programming Language :: Python :: 3.2
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Classifier: Topic :: Text Processing :: Linguistic
+Provides: mwtools

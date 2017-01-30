@@ -27,4 +27,14 @@ apertium/quality/testing.py -text
 dev/diag.py -text
 dev/punktgen.py -text
 /distribute_setup.py -text
+mwtools/python3/build/lib/mwtools/__init__.py -text
+mwtools/python3/dist/mwtools-0.7-py3.4.egg -text
+mwtools/python3/dist/mwtools-0.7-py3.5.egg -text
+mwtools/python3/mwtools.egg-info/PKG-INFO -text
+mwtools/python3/mwtools.egg-info/SOURCES.txt -text
+mwtools/python3/mwtools.egg-info/dependency_links.txt -text
+mwtools/python3/mwtools.egg-info/top_level.txt -text
+mwtools/python3/mwtools/__init__.py -text
+mwtools/python3/readme.txt -text
+mwtools/python3/setup.py -text
 /setup.py -text
