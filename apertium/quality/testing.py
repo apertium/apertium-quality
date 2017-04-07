@@ -67,7 +67,7 @@ class Test(object):
 		whereis(['svnversion'])
 		res = Popen('svnversion', stdout=PIPE, close_fds=True).communicate()[0].decode('utf-8').strip()
 		try:
-			int(res) # will raise error if it can't be int'd
+			#int(res) # will raise error if it can't be int'd
 			return str(res)
 		except:
 			raise UncleanWorkingDirectoryException("You must have a clean SVN directory. Commit or remove uncommitted files.")
@@ -165,8 +165,11 @@ class AutoTest(Test):
 			raise ValueError('A configuration file is required')
 		
 		self.langpair = abspath('.').split('apertium-')[-1]
-		self.lang1, self.lang2 = self.langpair.split('-')
-		
+		try:
+			self.lang1, self.lang2 = self.langpair.split('-')
+		except ValueError:
+			self.lang1 = self.langpair
+			self.lang2 = self.langpair		
 		if self.stats:
 			self.stats = Statistics(self.stats)
 		
