@@ -18,9 +18,9 @@ pjoin = os.path.join
 
 
 schemas = {
-	'config': "http://apertium.org/xml/quality/config/0.1",
-	'corpus': "http://apertium.org/xml/corpus/0.1",
-	'statistics': "http://apertium.org/xml/quality/statistics/0.9"
+	'config': "https://apertium.org/xml/quality/config/0.1",
+	'corpus': "https://apertium.org/xml/corpus/0.1",
+	'statistics': "https://apertium.org/xml/quality/statistics/0.9"
 }
 
 class ParseError(Exception):
