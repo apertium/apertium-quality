@@ -16,7 +16,12 @@ except:
 	from xml.etree.ElementTree import Element, SubElement
 
 from apertium.quality import schemas
-from mwtools import MediawikiHandler
+
+try:
+    from mwtools import MediawikiHandler
+except ImportError:
+    MediawikiHandler = None
+
 import nltk.data
 
 class CorpusExtractor(object):
@@ -57,33 +62,37 @@ class CorpusExtractor(object):
 				# conservative 10 to stop first few crazy pages
 				if int(ch.strip()) < 10:
 					self.badText = True
-			
+
 			elif self.inTitle:
-				if ch in (":", "Wikipedia", "Page"):
-					self.badText = True
-				else:
-					self.curTitle = ch
-	
+			    self.curTitle += ch
+
 			elif self.inText:
 				self.text.write(ch)
 	
 		def endElement(self, name):
-			if name == "page":
-				self.firstId = False
-				self.inRedirect = False
-				self.inPage = False
-				self.badText = False
-				self.text = StringIO()
+			if name == "title":
+        			if ":" in self.curTitle or \
+           				self.curTitle.startswith("Wikipedia") or \
+           				self.curTitle.endswith("Page"):
+            				self.badText = True
+        			self.inTitle = False
+
+			elif name == "page":
+        			self.firstId = False
+        			self.inRedirect = False
+        			self.inPage = False
+        			self.badText = False
+        			self.text = StringIO()
+        			self.curTitle = ""
 			elif name == "id":
-				self.inId = False
-			elif name == "title":
-				self.inTitle = False
-			elif name == "text" and self.inRedirect == False and self.badText == False:
-				if (len(self.text.getvalue()) > 8):
-					self.inq.put((self.text.getvalue(), self.curTitle))
+        			self.inId = False
+			elif name == "text" and not self.inRedirect and not self.badText:
+        			if len(self.text.getvalue()) > 8:
+            				self.inq.put((self.text.getvalue(), self.curTitle))
+
 			elif name == "mediawiki":
-				self.inMediawiki = False
-	
+        			self.inMediawiki = False
+
 	def __init__(self, fin, fout, cores=0, tokenizer=None, q=None, xml=False):
 		self.fin = fin
 		self.fout = fout
@@ -172,6 +181,9 @@ class CorpusExtractor(object):
 				if ch.strip() == "":
 					continue
 				data = "[= %s =]\n\n%s" % (title, ch)
+				if MediawikiHandler is None:
+					raise RuntimeError("MediawikiHandler is unavailable; Wikipedia parsing is currently broken")
+
 				article = MediawikiHandler(data).parse()
 				del data
 				parsed = self.tokenizer.tokenize(article)
