@@ -28,22 +28,22 @@ class CorpusExtractor(object):
 	class Handler(xml.sax.handler.ContentHandler):
 		def __init__(self, parent):
 			self.inq = parent.inq
-			
+
 			self.inPage = False
 			self.inTitle = False
 			self.inText = False
 			self.inRedirect = False
 			self.inId = False
 			self.firstId = False
-			
+
 			self.badText = False
 			self.text = StringIO()
 			self.curTitle = ""
-		
+
 		def startElement(self, name, attrs):
 			if name == "mediawiki":
-				self.inMediawiki = True	
-			elif name == "page":	
+				self.inMediawiki = True
+			elif name == "page":
 				self.inPage = True
 			elif name == "title":
 				self.inTitle = True
@@ -55,7 +55,7 @@ class CorpusExtractor(object):
 				self.inRedirect = True
 			elif not self.inMediawiki:
 				raise IOError("Not a valid wikipedia dump.")
-	
+
 		def characters(self, ch):
 			if self.inId and not self.firstId:
 				self.firstId = True
@@ -68,30 +68,30 @@ class CorpusExtractor(object):
 
 			elif self.inText:
 				self.text.write(ch)
-	
+
 		def endElement(self, name):
 			if name == "title":
-        			if ":" in self.curTitle or \
-           				self.curTitle.startswith("Wikipedia") or \
-           				self.curTitle.endswith("Page"):
-            				self.badText = True
-        			self.inTitle = False
+				if ":" in self.curTitle or \
+					self.curTitle.startswith("Wikipedia") or \
+					self.curTitle.endswith("Page"):
+					self.badText = True
+				self.inTitle = False
 
 			elif name == "page":
-        			self.firstId = False
-        			self.inRedirect = False
-        			self.inPage = False
-        			self.badText = False
-        			self.text = StringIO()
-        			self.curTitle = ""
+				self.firstId = False
+				self.inRedirect = False
+				self.inPage = False
+				self.badText = False
+				self.text = StringIO()
+				self.curTitle = ""
 			elif name == "id":
-        			self.inId = False
+				self.inId = False
 			elif name == "text" and not self.inRedirect and not self.badText:
-        			if len(self.text.getvalue()) > 8:
-            				self.inq.put((self.text.getvalue(), self.curTitle))
+				if len(self.text.getvalue()) > 8:
+					self.inq.put((self.text.getvalue(), self.curTitle))
 
 			elif name == "mediawiki":
-        			self.inMediawiki = False
+				self.inMediawiki = False
 
 	def __init__(self, fin, fout, cores=0, tokenizer=None, q=None, xml=False):
 		self.fin = fin
@@ -110,7 +110,7 @@ class CorpusExtractor(object):
 			print("Downloading tokenisation library. This may take some time. (~6MB)")
 			download('punkt')
 			self.tokenizer = nltk.data.load('tokenizers/punkt/english.pickle')
-	
+
 	def generate(self, max_sentences=0):
 		self._make_processes(self.fin, self.fout, max_sentences)
 		self.parser.start()
@@ -127,9 +127,9 @@ class CorpusExtractor(object):
 		else:
 			self.larry = Process(target=self.output_worker, args=(fout, max_sentences))
 		self.larry.daemon = True
-	
+
 	def _start_processes(self):
-		for w in self.workers:	
+		for w in self.workers:
 			w.start()
 		self.larry.start()
 
@@ -146,7 +146,7 @@ class CorpusExtractor(object):
 		parser.parse(f)
 		f.close()
 		del parser
-	
+
 	def heuristics(self, data, minwords=6, maxcomma=2, maxpunc=2, maxdigits=6):
 		punc = "#$%&\'()*+-/:;<=>?@[\\]^_`{|}~"
 		if '\n' in data:
@@ -192,7 +192,7 @@ class CorpusExtractor(object):
 				del parsed
 		except Empty:
 			pass
-	
+
 	def output_worker(self, fn, maxsentences=0):
 		pid = os.getpid()
 		try:
@@ -217,7 +217,7 @@ class CorpusExtractor(object):
 			f.close()
 		except Empty:
 			pass
-	
+
 	def xml_output_worker(self, fn, language, maxsentences=0):
 		pid = os.getpid()
 		ns = "{%s}" % schemas['corpus']
@@ -227,12 +227,12 @@ class CorpusExtractor(object):
 				'name': "Generated %s Wikipedia Corpus" % language, 
 				'tags': "generator:aq-wikicrp"
 			}
-			
+
 			if etree.__name__ == "lxml.etree":
 				kwargs['nsmap'] = {None: schemas['corpus']}
 			else:
 				kwargs["xmlns"] = schemas['corpus']
-			
+
 			root = Element(ns + "corpus", **kwargs)
 			while 1:
 				if maxsentences > 0 and count >= maxsentences: 
@@ -255,4 +255,4 @@ class CorpusExtractor(object):
 			sys.stdout.flush()
 		except Empty:
 			pass
-		
+
