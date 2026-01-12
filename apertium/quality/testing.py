@@ -886,7 +886,10 @@ class MorphTest(Test):
 		timing_begin = time.time()
 		self.run_tests(self.args['test'])
 		self.timer = time.time() - timing_begin
-		return 0
+		if self.fails == 0:
+			return 0
+		else:
+			return 1
 
 	def load_config(self):
 		global colourise
